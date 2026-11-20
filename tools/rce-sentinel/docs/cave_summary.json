@@ -1,0 +1,4 @@
+{"sessions": 17, "messages": 1036, "words": 92357, "med_words": 22, "art_rate": 9.1,
+ "ab_title": "In a controlled test caveman mode halves answer tokens and keeps 90% of the key points",
+ "haiku": {"normal_tok": 1266, "cave_tok": 520}, "sonnet": {"normal_tok": 1143, "cave_tok": 621},
+ "cut_pct": 50, "kept_pct": 90, "errors": 3, "judged": 24, "faster_pct": 42}

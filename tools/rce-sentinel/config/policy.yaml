@@ -20,3 +20,53 @@ router:
   learn_target_overturn_rate: 0.05
 
 caveman: true                     # env CAVEMAN=on|off overrides
+
+# Response skills the proxy adds to every routed request (src/rce_sentinel/skills.py).
+# The text is constant, so each provider's prompt cache still hits on it.
+skills:
+  enabled: [caveman]              # RCE_SENTINEL_SKILLS=caveman,... overrides; "" = none
+  surfaces: [openai, anthropic]   # proxy front ends that inject them
+  custom: {}                      # name: instruction; a custom name replaces a built-in
+
+# Exact-match answer cache for the OpenAI-compatible proxy (memory/answers.py). Repeats
+# are answered from SQLite with no model call. Bypass: header x-rce-cache: off.
+answer_cache:
+  enabled: true                   # RCE_SENTINEL_ANSWER_CACHE=0 turns it off
+  ttl_hours: 24                   # RCE_SENTINEL_ANSWER_CACHE_TTL_H overrides
+  max_entries: 5000               # least recently used entries go first
+  share_across_models: true       # model "auto": a reply from any model serves a repeat
+
+# Expected-cost routing (orchestrator/scoring.py). For each model:
+#   price x pacing + value_per_second x its median latency
+#   + P(escalate) x cost of the tiers above + P(overturned) x error_cost_usd
+# All rates are measured from this repo's real calls; until a model has min_samples real
+# calls the plain cheapest-first cascade is used. The cascade starts at the cheapest tier
+# in expected cost, so a slow free model that usually escalates is skipped when someone is
+# waiting and used first when nobody is.
+preeval:                          # `rce-sentinel route`: tag a dev prompt, then pick a model
+  jev_below_confidence: 0.6       # rules less sure than this ask Jev, then a local model
+  # A failed reply costs developer time to review, which grows with its size:
+  #   review = tokens_out / review_tokens_per_min / 60 x dev_usd_per_hour
+  # If every tier fails, the developer does it by hand: rework_factor x review.
+  dev_usd_per_hour: 50
+  review_tokens_per_min: 1000
+  rework_factor: 3
+
+routing:
+  monthly_usd: 20.0              # paid allowance; ahead of the calendar, paid tokens weigh more
+  min_samples: 8                  # real calls before a model's own numbers are trusted
+  explore_rate: 0.05              # share of units that still start at tier1, to keep measuring
+  local_only: false               # true (or RCE_SENTINEL_LOCAL_ONLY=1): no cloud models at all
+  mode_profile:                   # scan mode -> profile; RCE_SENTINEL_PROFILE overrides
+    pre-commit: pre-commit
+    post-commit: post-commit
+    post-merge: post-commit
+    scan: interactive
+    trace: background
+    watch: background
+    intel: background
+  profiles:
+    pre-commit:  { value_per_second: 0.014, latency_cap_s: 10, error_cost_usd: 1.0, provider_sort: latency }  # ~$50/h, commit blocked
+    interactive: { value_per_second: 0.014, latency_cap_s: 30, error_cost_usd: 1.0, provider_sort: latency }
+    post-commit: { value_per_second: 0.001, error_cost_usd: 1.0, provider_sort: price }
+    background:  { value_per_second: 0.0, error_cost_usd: 1.0, provider_sort: price }   # nobody waits

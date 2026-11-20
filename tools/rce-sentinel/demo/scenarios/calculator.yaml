@@ -1,0 +1,45 @@
+# Switch test: a multi-turn build where each turn can run on a different model.
+# Turn 1 fixes seven decisions. Later turns never repeat them, so a model that joins after a
+# switch only knows them through the handoff (full transcript, context pack, or nothing).
+# Canaries check the files written after turn 1 for those decisions.
+
+name: calculator
+goal: >-
+  Scientific calculator app with the cleanest possible UI for iOS and Android, in React
+  Native, Flutter, and SwiftUI, sharing one behaviour spec.
+max_tokens: 32000
+
+turns:
+  - prompt: |
+      Build a scientific calculator app with the cleanest possible UI for iOS and Android.
+      React Native first; Flutter and SwiftUI ports come later. Fixed decisions:
+      1. The engine module is named `calc_core`: pure functions, no UI imports.
+      2. All arithmetic uses decimal math (decimal.js), never JS floats: 0.1 + 0.2 shows 0.3.
+      3. Operator keys are colour #1E88E5, digit keys #F5F5F5, the equals key #FF7043.
+      4. Angle mode defaults to DEG; the toggle label reads "DEG/RAD".
+      5. History keeps the last 20 expressions, newest first.
+      6. Factorial of a non-integer shows "Error: n! needs a whole number". No gamma function.
+      7. Buttons have rounded corners of radius 16.
+      Plan the file layout, then write calc_core (TypeScript) with its unit tests only.
+  - prompt: |
+      Continue. Build the React Native UI on top of the existing engine, then port the
+      whole app to Flutter.
+  - prompt: |
+      Continue. Port the app to SwiftUI.
+
+# Default models per turn; override with --models. A different model each turn forces a
+# switch at every boundary. Families differ on purpose: no shared tokenizer or habits.
+models:
+  - deepseek/deepseek-v4.1-flash
+  - anthropic/claude-sonnet-5.5
+  - openai/gpt-6.1-sol
+
+canaries:
+  - { id: engine_name, desc: "UI imports calc_core", pattern: "calc_core" }
+  - { id: decimal_math, desc: "decimal arithmetic, not floats", pattern: "(?i)decimal" }
+  - { id: operator_colour, desc: "operator keys #1E88E5", pattern: "(?i)1E88E5" }
+  - { id: equals_colour, desc: "equals key #FF7043", pattern: "(?i)FF7043" }
+  - { id: deg_rad, desc: "toggle label DEG/RAD", pattern: "DEG/RAD" }
+  - { id: history_20, desc: "history keeps 20", pattern: "(?is)history.{0,300}\\b20\\b|\\b20\\b.{0,300}history" }
+  - { id: factorial_msg, desc: "factorial error text", pattern: "n! needs a whole number" }
+  - { id: radius_16, desc: "button corner radius 16", pattern: "(?i)radius\\D{0,20}16|16\\D{0,6}radius|cornerRadius\\(16" }

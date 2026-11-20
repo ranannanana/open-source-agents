@@ -41,3 +41,4 @@ Thumbs.db
 .rce-sentinel/
 .ruff_cache/
 .rce-sentinel-trace/
+.rce-sentinel-ui/

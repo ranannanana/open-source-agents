@@ -85,3 +85,6 @@ out/
 tmp/
 temp/
 .cache/
+
+# rce-sentinel local state: call logs, caches, session sandboxes
+.rce-sentinel/

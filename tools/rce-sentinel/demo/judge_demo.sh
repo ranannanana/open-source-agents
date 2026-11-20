@@ -50,8 +50,8 @@ echo "(apfel judges the first findings, hits its quota, and later calls move to 
 RCE_SENTINEL_QUOTA="apple-foundationmodel=1500" \
   trace --show-io --file "$TOOL_DIR/demo/prompts/5_multi_endpoint_service.py"
 
-step "7. Memory shield: an attacker flips every cached verdict to safe in SQLite"
 DB="$STATE/workspace/.rce-sentinel/sentinel.db"
+step "7. Memory shield: an attacker flips every cached verdict to safe in SQLite"
 echo "signed cached verdicts: $(sqlite3 "$DB" 'SELECT COUNT(*) FROM result_cache')"
 sqlite3 "$DB" "UPDATE result_cache SET verdict_json = replace(verdict_json, '\"vulnerable\"', '\"safe\"')"
 echo "rescanning prompt 1 after tampering:"
@@ -59,5 +59,18 @@ trace --file "$TOOL_DIR/demo/prompts/1_flask_injection.py" | sed -n '/\[4\]/,/\[
 
 step "8. A2A audit log"
 sqlite3 -header -column "$DB" "SELECT kind, COUNT(*) AS msgs FROM a2a_log GROUP BY kind ORDER BY kind"
+
+step "9. Expected cost: same service, a developer waiting vs nobody waiting"
+echo "(the router now has real latency and escalation numbers for each model from steps 1-8;"
+echo " for the demo it trusts them after 3 calls instead of the default 8)"
+sqlite3 "$DB" "DELETE FROM result_cache"
+echo "--- profile pre-commit: a waiting second is worth \$0.014 (about \$50/h)"
+RCE_SENTINEL_MIN_SAMPLES=3 trace --profile pre-commit \
+  --file "$TOOL_DIR/demo/prompts/5_multi_endpoint_service.py" | sed -n '/\[3b\]/,/\[5\]/p'
+sqlite3 "$DB" "DELETE FROM result_cache"
+echo "--- profile background: waiting costs nothing"
+RCE_SENTINEL_MIN_SAMPLES=3 trace --profile background \
+  --file "$TOOL_DIR/demo/prompts/5_multi_endpoint_service.py" | sed -n '/\[3b\]/,/\[5\]/p'
+
 echo
 echo "Demo state kept at $WORK (delete when done)."

@@ -126,7 +126,8 @@ class IntelAgent:
         budget = Budget.from_policy(self.settings.policy)
         casefile = CaseFile.build(self.modules, [], self.inventory, [])
         return Router(self.settings, self.store, self.scanner.registry, self.scanner.provider,
-                      budget, "intel-" + str(int(time.time())), versions, casefile, "")
+                      budget, "intel-" + str(int(time.time())), versions, casefile, "",
+                      mode="intel")
 
     def _dedupe(self, items: list[IntelItem]) -> list[IntelItem]:
         out, seen = [], set()

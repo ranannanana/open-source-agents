@@ -1,6 +1,6 @@
 [project]
 name = "rce-sentinel"
-version = "0.1.0"
+version = "0.2.0"
 description = "Cost-aware git-hook scanner and zero-day intel agent for Remote Code Execution risk"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -11,10 +11,12 @@ dependencies = [
   "httpx>=0.27",
   "packaging>=23.0",
   "defusedxml>=0.7",
+  "truststore>=0.10",  # OS trust store: works behind TLS-inspecting proxies
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.5"]
+ui = ["streamlit==1.50.0"]
 
 [project.scripts]
 rce-sentinel = "rce_sentinel.cli:main"

@@ -1,0 +1,35 @@
+# Local NeMo Switchyard routes for rce-sentinel (schema: Switchyard v0.3.0 docs/reference/toml_schema.md).
+# Start:  switchyard-server --config config/switchyard/routes.toml --host 127.0.0.1 --port 4000
+# Then:   export SWITCHYARD_BASE_URL=http://127.0.0.1:4000/v1
+# Every target goes through local Ollama (:11436); gemma4:31b-cloud is served by ollama.com.
+schema_version = 1
+
+[llm_clients.ollama]
+format = "openai_chat"
+base_url = "http://127.0.0.1:11436/v1"
+timeout_ms = 90000
+max_retries = 1
+
+[targets.qwen]
+id = "qwen2.5:3b"
+llm_client = "ollama"
+
+[targets.gemma]
+id = "gemma4:31b-cloud"
+llm_client = "ollama"
+
+# Single-family route: Switchyard adds failover, stats, and Prometheus metrics.
+[routes.gemma]
+id = "switchyard-gemma"
+type = "passthrough"
+target = "gemma"
+
+# Two-model route: Switchyard's stage router picks the efficient or the capable model.
+# It is built for multi-turn agent sessions; rce-sentinel sends single-turn prompts.
+[routes.stage]
+id = "switchyard-stage"
+type = "stage_router"
+efficient_target = "qwen"
+capable_target = "gemma"
+picker = "efficient_first"
+confidence_threshold = 0.5

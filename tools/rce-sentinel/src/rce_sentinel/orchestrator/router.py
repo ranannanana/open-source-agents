@@ -4,6 +4,10 @@ Cheap model first. Escalate when confidence is low, JSON fails validation, cited
 cannot be found in the code, two tier-1 samples disagree, or a hard rule fires. A "safe"
 verdict on a dangerous sink needs a higher bar than "vulnerable", because a false negative
 costs more. Every accepted verdict is checked by a model from a different family.
+
+Which model, and which tier to start at, is an expected-cost decision (see scoring.py):
+price, the value of the time someone spends waiting, and how often a model's answers escalate
+or get overturned, all measured from this repo's call log.
 """
 
 from __future__ import annotations
@@ -14,7 +18,7 @@ import os
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import Any, TypeVar
 
@@ -37,6 +41,7 @@ from rce_sentinel.orchestrator.llm import (
     Provider,
     inline_schema,
 )
+from rce_sentinel.orchestrator.scoring import Scorer, plan_cascade, profile_for
 from rce_sentinel.orchestrator.tuning import learned_threshold
 
 T = TypeVar("T", bound=BaseModel)
@@ -109,7 +114,7 @@ def evidence_ok(v: Verdict, f: Finding, lines: list[str]) -> str | None:
 class Router:
     def __init__(self, settings: Settings, store: Store, registry: ModelRegistry,
                  provider: Provider, budget: Budget, run_id: str, versions: dict[str, str],
-                 casefile: CaseFile, rules_digest: str):
+                 casefile: CaseFile, rules_digest: str, mode: str = "trace"):
         self.settings = settings
         self.policy: dict[str, Any] = settings.policy.get("router", {})
         self.store = store
@@ -141,6 +146,14 @@ class Router:
         self.threshold = base
         self.safe_threshold = max(float(self.policy.get("safe_confidence_threshold", 0.9)),
                                   base + 0.1)
+        self.profile = profile_for(settings.policy, mode)
+        self.scorer = Scorer(store, settings.policy, self.profile)
+        registry.local_only = self.profile.local_only
+        registry.provider_sort = self.profile.provider_sort
+        self.plans: list[str] = []              # route-plan explanations, shown by trace
+        self._next_cost: dict[str, float] = {}  # tier -> expected cost of the tiers above
+        self._said: set[str] = set()
+        self._served: dict[int, str] = {}       # llm_calls row -> model a gateway picked
 
     # --- model selection -------------------------------------------------------
     def _warm(self, model: str, phash: str) -> bool:
@@ -171,15 +184,33 @@ class Router:
         vals = sorted(r["latency_ms"] for r in rows if r["latency_ms"])
         return vals[len(vals) // 2] if vals else 0.0
 
-    def pick(self, tier: str, *, exclude_family: str | None = None, phash: str = "",
-             est_in: int = 1500, est_out: int = 200, prefix_tokens: int = 0,
-             skip: frozenset[str] = frozenset(), fastest: bool = False
-             ) -> ModelSpec | None:
-        """Cheapest available model in a tier; a warm prompt cache counts as a discount."""
+    def eligible(self, tier: str, *, exclude_family: str | None = None, est_in: int = 1500,
+                 est_out: int = 200, skip: frozenset[str] = frozenset(), task: str = "judge"
+                 ) -> list[ModelSpec]:
+        """Hard limits: available, other family, fits the token window, quota left, paid
+        allowance left, and (when something faster exists) within the profile's latency cap."""
         # 15% margin: estimates are chars/4 and small models tokenise differently.
         cands = [m for m in self.registry.available(tier) if m.family != exclude_family
                  and m.id not in skip and int(est_in * 1.15) + est_out <= m.context_tokens
                  and self._within_quota(m)]
+        if not self.scorer.paid_allowed:
+            free = [m for m in cands if not self.scorer.is_paid(m)]
+            if len(free) < len(cands):
+                self._say_once("allowance", (
+                    f"model fallback (monthly allowance): ${self.scorer.spent:.2f} of "
+                    f"${self.scorer.monthly_usd:.2f} spent this month, so paid models are off "
+                    "until it resets or routing.monthly_usd is raised."))
+            cands = free
+        fast = [m for m in cands if not self.scorer.too_slow(m, task)]
+        return fast or cands
+
+    def pick(self, tier: str, *, exclude_family: str | None = None, phash: str = "",
+             est_in: int = 1500, est_out: int = 200, prefix_tokens: int = 0,
+             skip: frozenset[str] = frozenset(), fastest: bool = False, task: str = "judge"
+             ) -> ModelSpec | None:
+        """Lowest expected cost in a tier once measured; cheapest (warm cache counts) before."""
+        cands = self.eligible(tier, exclude_family=exclude_family, est_in=est_in,
+                              est_out=est_out, skip=skip, task=task)
         if not cands:
             return None
 
@@ -187,12 +218,80 @@ class Router:
             cached = prefix_tokens if phash and self._warm(m.id, phash) else 0
             return m.cost(est_in, est_out, cached)
 
-        # Real endpoints beat mocks; then cheapest (warm cache counts); then config order.
         def lat(m: ModelSpec) -> float:
             return self._median_latency(m.id) if fastest else 0.0
 
+        scored = self.scorer.any_measured(cands, task)
+        nxt = self._cost_above(tier, task, est_in, est_out) if scored else 0.0
+
+        def value(m: ModelSpec) -> float:
+            return self.scorer.score(m, task, est(m), nxt).total if scored else est(m)
+
+        # Real endpoints beat mocks; then expected cost (or price); then speed; config order.
         return min(enumerate(cands), key=lambda im: (self.registry.simulated(im[1]),
-                                                      est(im[1]), lat(im[1]), im[0]))[1]
+                                                      value(im[1]), lat(im[1]), im[0]))[1]
+
+    def _by_tier(self, task: str, est_in: int, est_out: int, prefix_tokens: int = 0,
+                 phash: str = "") -> tuple[dict[str, list[tuple[ModelSpec, float]]],
+                                           list[ModelSpec]]:
+        by_tier: dict[str, list[tuple[ModelSpec, float]]] = {}
+        everyone: list[ModelSpec] = []
+        for tier in TIERS:
+            cands = self.eligible(tier, est_in=est_in, est_out=est_out, task=task)
+            real = [m for m in cands if not self.registry.simulated(m)]
+            cands = real or cands
+            everyone += cands
+            by_tier[tier] = [(m, m.cost(est_in, est_out, prefix_tokens if phash and
+                                        self._warm(m.id, phash) else 0)) for m in cands]
+        return by_tier, everyone
+
+    def _fill_next_cost(self, best: dict[str, Any]) -> None:
+        nxt = self.scorer.tail()
+        for tier in reversed(TIERS):
+            self._next_cost[tier] = nxt
+            if tier in best:
+                nxt = best[tier].total
+
+    def _cost_above(self, tier: str, task: str, est_in: int, est_out: int) -> float:
+        """Expected cost of escalating out of `tier`: the best path through the tiers above."""
+        if tier not in self._next_cost:
+            by_tier, _ = self._by_tier(task, est_in, est_out)
+            self._fill_next_cost(plan_cascade(self.scorer, task, by_tier)[1])
+        return self._next_cost[tier]
+
+    def plan(self, task: str, est_in: int, est_out: int = 200, prefix_tokens: int = 0,
+             phash: str = "", key: str = "") -> str:
+        """Choose the tier the cascade starts at. Before any model is measured: tier1.
+
+        A small, deterministic share of units (routing.explore_rate) still starts at tier1,
+        so a skipped cheap model keeps being measured and can win back its place."""
+        by_tier, everyone = self._by_tier(task, est_in, est_out, prefix_tokens, phash)
+        if not self.scorer.any_measured(everyone, task):
+            return TIERS[0]
+        start, best = plan_cascade(self.scorer, task, by_tier)
+        self._fill_next_cost(best)
+        rate = float(self.settings.policy.get("routing", {}).get("explore_rate", 0.05))
+        bucket = int(hashlib.sha256(key.encode()).hexdigest()[:8], 16) / 0xFFFFFFFF
+        if start != TIERS[0] and key and bucket < rate:
+            self.emit(f"  route plan: exploring, starting at {TIERS[0]} instead of {start} "
+                      "to keep measuring the cheaper models")
+            start = TIERS[0]
+        lines = [f"route plan ({self.profile.name} profile, "
+                 f"${self.profile.value_per_second * 3600:.0f}/h of waiting, pacing "
+                 f"x{self.scorer.pacing:.1f}): start at {start}"]
+        lines += [f"  {t}: {best[t].explain()}" for t in TIERS if t in best]
+        text = "\n".join(lines)
+        if text not in self._said:
+            self._said.add(text)
+            self.plans.append(text)
+            for ln in lines:
+                self.emit(f"  {ln}")
+        return start
+
+    def _say_once(self, key: str, msg: str) -> None:
+        if key not in self._said:
+            self._said.add(key)
+            self._degrade(msg)
 
     def pick_verifier(self, finder: ModelSpec, skip: frozenset[str] = frozenset()
                       ) -> ModelSpec | None:
@@ -243,7 +342,11 @@ class Router:
             if self.capture_io:
                 reply = " ".join(res.text.split())
                 self.emit(f"     reply: {reply[:400]}{'...' if len(reply) > 400 else ''}")
-        cost = spec.cost(res.tokens_in, res.tokens_out, res.cached_tokens)
+        cost = res.cost if res.cost is not None else spec.cost(
+            res.tokens_in, res.tokens_out, res.cached_tokens)
+        gateway = self.registry.providers.get(spec.provider, {}).get("gateway")
+        if gateway and res.served and res.served != spec.id and shadow != 2:
+            self.emit(f"     (gateway served it with {res.served})")
         self.budget.charge(res.tokens_in + res.tokens_out, cost, elapsed)
         self.store.execute("INSERT OR REPLACE INTO prompt_prefix VALUES (?,?,?)",
                            (spec.id, phash, time.time()))
@@ -269,6 +372,8 @@ class Router:
             "latency_ms": res.latency_ms or elapsed * 1000, "caveman": int(caveman),
             "shadow": shadow, "simulated": int(self.registry.simulated(spec)),
         })
+        if gateway and res.served:
+            self._served[row] = res.served
         if self.probe and caveman and shadow == 0:
             self._caveman_probe(spec, task, system, user, stable_prefix, max_tokens, row)
         return res, row
@@ -376,7 +481,15 @@ class Router:
         t1_rows: list[tuple[int, str]] = []
         extra = ""
         last: Verdict | None = None
+        system, stable, user = self._judge_prompt(f, lines, extra)
+        start = self.plan("judge", P.approx_tokens(system + user),
+                          prefix_tokens=P.approx_tokens(system + stable),
+                          phash=P.prefix_hash(system, stable), key=f.context_hash)
         for tier in TIERS:
+            if TIERS.index(tier) < TIERS.index(start):
+                self._note(trail, f"{tier}: skipped by route plan (start at {start} is "
+                                  "cheaper in expected cost)")
+                continue
             system, stable, user = self._judge_prompt(f, lines, extra)
             phash = P.prefix_hash(system, stable)
             est_in = P.approx_tokens(system + user)
@@ -397,7 +510,8 @@ class Router:
                 reason = self._self_consistency(f, lines, extra, spec, v, t1_rows)
             verified = False
             if not reason and v is not None:
-                reason, verified, dissent = self._cross_verify(f, lines, spec, v)
+                reason, verified, dissent = self._cross_verify(f, lines, self._as_served(spec, row),
+                                                               v)
                 if dissent and v.verdict == "vulnerable" and hard_rule:
                     # Asymmetric gate: only "safe" needs cross-family agreement. A rule-proven
                     # tainted flow stays flagged; the dissent is recorded and shown.
@@ -509,6 +623,15 @@ class Router:
                 return "only a mock verifier was available for a safe verdict", False, ""
             return "", False, ""
         return "", True, ""
+
+    def _as_served(self, spec: ModelSpec, row: int) -> ModelSpec:
+        """When a gateway picked the model, verify against the family that really answered."""
+        served = self._served.get(row)
+        fam = self.registry.family_of(served) if served else None
+        if fam and fam != spec.family:
+            self.emit(f"     verifier must differ from {fam} ({served} answered for {spec.id})")
+            return replace(spec, family=fam)
+        return spec
 
     def _relay_handoff(self, f: Finding, v: Verdict | None, reason: str, tier: str) -> str:
         """Distilled escalation note, passed to the next tier as a signed message."""

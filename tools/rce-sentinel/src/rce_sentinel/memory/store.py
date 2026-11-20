@@ -5,15 +5,19 @@ Nothing here is keyed by model name, so swapping a tier's model keeps every cach
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 import sqlite3
 import threading
 import time
+import zlib
 from pathlib import Path
 from typing import Any
 
-from rce_sentinel.memory.trust import VERIFIED, Signer
+from rce_sentinel.memory.screen import WITHHELD, looks_like_injection
+from rce_sentinel.memory.trust import UNVERIFIED, VERIFIED, Signer
 
 _CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
@@ -58,7 +62,45 @@ CREATE TABLE IF NOT EXISTS intel_items (
 CREATE TABLE IF NOT EXISTS prompt_prefix (model TEXT, prefix_hash TEXT, last_used REAL,
   PRIMARY KEY (model, prefix_hash));
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS prompt_tags (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, prompt_hash TEXT,
+  prompt_tokens INTEGER, source TEXT, task_type TEXT, level REAL, tags TEXT, model TEXT,
+  tier TEXT, est_tokens_in INTEGER, est_tokens_out INTEGER, est_cost REAL, outcome TEXT,
+  ts REAL);
+CREATE TABLE IF NOT EXISTS handoffs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, mode TEXT, turn INTEGER, model TEXT,
+  switched_from TEXT, reason TEXT, context_tokens INTEGER, tokens_in INTEGER,
+  tokens_out INTEGER, cost REAL, ok INTEGER, files TEXT, rewrites TEXT, ts REAL,
+  event_key TEXT);
+CREATE TABLE IF NOT EXISTS outcomes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, tag_id INTEGER, session_id TEXT, model TEXT,
+  task_type TEXT, difficulty TEXT, success INTEGER, outcome TEXT, review_s REAL,
+  tokens_out INTEGER, latency_ms REAL, source TEXT, ts REAL);
+CREATE INDEX IF NOT EXISTS outcomes_model ON outcomes(model, task_type);
+CREATE TABLE IF NOT EXISTS bench_results (
+  suite TEXT, item TEXT, model TEXT, split TEXT, task_type TEXT, difficulty TEXT,
+  success INTEGER, checks TEXT, judge TEXT, tokens_in INTEGER, tokens_out INTEGER,
+  cost REAL, latency_ms REAL, error TEXT, simulated INTEGER DEFAULT 0, ts REAL,
+  PRIMARY KEY (suite, item, model));
+CREATE TABLE IF NOT EXISTS usage_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT, session TEXT, path TEXT, kind TEXT,
+  requested TEXT, model TEXT, policy_choice TEXT, rule TEXT, rewritten INTEGER,
+  fallback INTEGER, log_only INTEGER, status INTEGER, task TEXT, tag_id INTEGER,
+  tokens_in INTEGER, input_tokens INTEGER, cache_write_5m INTEGER, cache_write_1h INTEGER,
+  cache_read INTEGER, tokens_out INTEGER, cost REAL, cost_requested REAL, latency_ms REAL,
+  ttft_ms REAL, n_messages INTEGER, n_tools INTEGER, stream INTEGER, switched_from TEXT,
+  ts REAL, skills TEXT);
+CREATE INDEX IF NOT EXISTS usage_events_ts ON usage_events(ts);
+CREATE TABLE IF NOT EXISTS bench_outputs (
+  suite TEXT, item TEXT, model TEXT, reply BLOB, judge_raw TEXT, sha TEXT, chars INTEGER,
+  ts REAL, PRIMARY KEY (suite, item, model));
+CREATE TABLE IF NOT EXISTS vectors (
+  kind TEXT, ref TEXT, model TEXT, sha TEXT, dim INTEGER, vec BLOB, ts REAL,
+  PRIMARY KEY (kind, ref, model));
 """
+
+# Outcome labels: what the developer did with the answer.
+OUTCOMES = {"accepted": 1, "edited": 1, "rejected": 0, "failed": 0}
 
 
 class Store:
@@ -67,6 +109,9 @@ class Store:
         self.signer = signer or Signer.load()
         self.rejected_rows = 0  # rows ignored for a bad or missing signature
         self._lock = threading.Lock()
+        if self.path != ":memory:" and not Path(self.path).exists():
+            # Owner-only from the first byte; SQLite's journals copy the mode.
+            os.close(os.open(self.path, os.O_WRONLY | os.O_CREAT, 0o600))
         self.conn = sqlite3.connect(self.path, check_same_thread=False, timeout=10)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
@@ -76,12 +121,17 @@ class Store:
     def _ensure_columns(self) -> None:
         """Add trust/signature columns to a database created before they existed."""
         wanted = {"result_cache": {"trust": "INTEGER DEFAULT 0", "sig": "TEXT"},
-                  "facts": {"repo_id": "TEXT", "trust": "INTEGER DEFAULT 0", "sig": "TEXT"}}
+                  "facts": {"repo_id": "TEXT", "trust": "INTEGER DEFAULT 0", "sig": "TEXT"},
+                  "usage_events": {"skills": "TEXT"},
+                  "handoffs": {"event_key": "TEXT"}}
         for table, cols in wanted.items():
             have = {r["name"] for r in self.conn.execute(f"PRAGMA table_info({table})")}
             for col, decl in cols.items():
                 if col not in have:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        # Idempotent handoff log: a replayed event lands once (NULL keys never clash).
+        self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS handoffs_event "
+                          "ON handoffs(event_key)")
 
     def close(self) -> None:
         self.conn.close()
@@ -147,6 +197,10 @@ class Store:
                 r.get("commit_sha"))
 
     def add_fact(self, row: dict[str, Any], *, repo_id: str, trust: int) -> None:
+        """Store a reviewed fact; instruction-like reasons are withheld and demoted."""
+        if looks_like_injection(str(row.get("reason") or "")):
+            row = {**row, "reason": WITHHELD}
+            trust = UNVERIFIED
         row = {**row, "repo_id": repo_id, "trust": trust}
         row["sig"] = self.signer.sign(*self._fact_fields(row))
         cols = ",".join(row)
@@ -185,6 +239,78 @@ class Store:
                                     tuple(row.values()))
             self.conn.commit()
             return int(cur.lastrowid or 0)
+
+    def _insert(self, table: str, row: dict[str, Any]) -> int:
+        row = {**row, "ts": time.time()}
+        cols = ",".join(row)
+        marks = ",".join("?" for _ in row)
+        with self._lock:
+            cur = self.conn.execute(f"INSERT INTO {table}({cols}) VALUES ({marks})",
+                                    tuple(row.values()))
+            self.conn.commit()
+            return int(cur.lastrowid or 0)
+
+    def log_tags(self, row: dict[str, Any]) -> int:
+        return self._insert("prompt_tags", row)
+
+    def save_output(self, suite: str, item: str, model: str, reply: str,
+                    judge_raw: str = "") -> None:
+        """Keep the full reply, zlib-compressed."""
+        raw = reply.encode()
+        self.execute(
+            "INSERT OR REPLACE INTO bench_outputs(suite, item, model, reply, judge_raw, sha, "
+            "chars, ts) VALUES (?,?,?,?,?,?,?,?)",
+            (suite, item, model, zlib.compress(raw, 9), judge_raw or None,
+             hashlib.sha256(raw).hexdigest()[:16], len(reply), time.time()))
+
+    def output(self, suite: str, item: str, model: str) -> str | None:
+        rows = self.execute("SELECT reply FROM bench_outputs WHERE suite=? AND item=? AND "
+                            "model=?", (suite, item, model))
+        return zlib.decompress(rows[0]["reply"]).decode() if rows else None
+
+    def log_usage(self, row: dict[str, Any]) -> int:
+        return self._insert("usage_events", row)
+
+    def log_handoff(self, row: dict[str, Any]) -> int:
+        """Insert a handoff; a row whose event_key is already logged is skipped (0)."""
+        row = {**row, "ts": time.time()}
+        cols = ",".join(row)
+        marks = ",".join("?" for _ in row)
+        with self._lock:
+            cur = self.conn.execute(f"INSERT OR IGNORE INTO handoffs({cols}) VALUES ({marks})",
+                                    tuple(row.values()))
+            self.conn.commit()
+            return int(cur.lastrowid or 0) if cur.rowcount else 0
+
+    def record_outcome(self, *, model: str, task_type: str, difficulty: list[float],
+                       outcome: str, source: str, tag_id: int | None = None,
+                       session_id: str = "", review_s: float | None = None,
+                       tokens_out: int = 0, latency_ms: float = 0.0) -> int:
+        """One graded answer: the evidence calibration learns from."""
+        if outcome not in OUTCOMES:
+            raise ValueError(f"outcome must be one of {sorted(OUTCOMES)}")
+        if tag_id is not None:
+            self.execute("UPDATE prompt_tags SET outcome=? WHERE id=?", (outcome, tag_id))
+        return self._insert("outcomes", {
+            "tag_id": tag_id, "session_id": session_id, "model": model,
+            "task_type": task_type, "difficulty": json.dumps(difficulty),
+            "success": OUTCOMES[outcome], "outcome": outcome, "review_s": review_s,
+            "tokens_out": tokens_out, "latency_ms": latency_ms, "source": source})
+
+    def outcome_for_tag(self, tag_id: int, outcome: str, review_s: float | None = None
+                        ) -> int:
+        """Grade a routed prompt by the id `route` or the proxy printed."""
+        rows = self.execute("SELECT * FROM prompt_tags WHERE id=?", (tag_id,))
+        if not rows:
+            raise KeyError(f"no routed prompt with id {tag_id}")
+        r = rows[0]
+        diff = json.loads(r["tags"] or "{}").get("difficulty") or [0.0, 1.0, 0.0, 0.0]
+        if isinstance(diff, dict):  # stored keyed by level name, in level order
+            diff = list(diff.values())
+        return self.record_outcome(model=r["model"] or "", task_type=r["task_type"] or "",
+                                   difficulty=diff, outcome=outcome, source="user",
+                                   tag_id=tag_id, session_id=r["session_id"] or "",
+                                   review_s=review_s)
 
     def mark_agreement(self, row_ids: list[int], agree: bool) -> None:
         for rid in row_ids:

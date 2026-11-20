@@ -125,6 +125,18 @@ def render(text: str, lang: str, rep: ScanReport, scanner: Scanner, wall: float,
         p(f"      * {f.rule_id} {f.dependency.name if f.dependency else ''} "
           f"reachable={f.reachable} -> {f.risk.label.upper() if f.risk else '?'}")
 
+    router = getattr(scanner, "last_router", None)
+    if router is not None:
+        prof = router.profile
+        p(f"[3b] ROUTE PLAN ({prof.name} profile: waiting valued at "
+          f"${prof.value_per_second * 3600:.0f}/h, paid pacing x{router.scorer.pacing:.1f}, "
+          f"${router.scorer.spent:.2f} of ${router.scorer.monthly_usd:.2f} spent this month"
+          f"{', local only' if prof.local_only else ''})")
+        if router.plans:
+            for plan in router.plans:
+                out.extend(f"    {ln}" for ln in plan.splitlines())
+        else:
+            p("    not enough measured calls yet: plain cheapest-first cascade from tier1")
     p("[4] MODEL SWITCHING (in order)")
     if not calls:
         hit = [f for f in code_findings if f.decided_by.startswith("cache")]

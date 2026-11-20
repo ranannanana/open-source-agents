@@ -19,11 +19,15 @@ TOOL_ROOT = Path(__file__).parents[1]
 @pytest.fixture(autouse=True)
 def offline_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("RCE_SENTINEL_OFFLINE", "1")
+    monkeypatch.setenv("RCE_SENTINEL_NO_ENV_AUTOLOAD", "1")  # never read real keys
+    for key in ("OPENCODE_API_KEY", "OPENROUTER_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("RCE_SENTINEL_PROVIDER", "mock")
     monkeypatch.setenv("RCE_SENTINEL_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("RCE_SENTINEL_KEY_FILE", str(tmp_path / "test.key"))
     for var in ("CAVEMAN", "RCE_SENTINEL_CAVEMAN_PROBE", "RCE_SENTINEL_SHADOW_RATE",
-                "RCE_SENTINEL_CONFIG_DIR", "SLACK_WEBHOOK_URL", "DISCORD_WEBHOOK_URL"):
+                "RCE_SENTINEL_CONFIG_DIR", "SLACK_WEBHOOK_URL", "DISCORD_WEBHOOK_URL",
+                "RCE_SENTINEL_PROFILE", "RCE_SENTINEL_LOCAL_ONLY"):
         monkeypatch.delenv(var, raising=False)
 
 

@@ -1,0 +1,170 @@
+[
+ {
+  "a_points": 8,
+  "b_covers": 7,
+  "b_error": false,
+  "model": "haiku",
+  "prompt": "What is the difference between a Python list and a tuple, and when should I use each?"
+ },
+ {
+  "a_points": 8,
+  "b_covers": 8,
+  "b_error": false,
+  "model": "haiku",
+  "prompt": "My React component re-renders on every keystroke and the page feels slow. What are the likely causes and fixes?"
+ },
+ {
+  "a_points": 8,
+  "b_covers": 6,
+  "b_error": false,
+  "model": "haiku",
+  "prompt": "Explain what a Postgres index is and when adding one can make writes slower."
+ },
+ {
+  "a_points": 8,
+  "b_covers": 7,
+  "b_error": false,
+  "model": "haiku",
+  "prompt": "git says 'detached HEAD'. What does that mean and how do I get back to my branch without losing work?"
+ },
+ {
+  "a_points": 8,
+  "b_covers": 7,
+  "b_error": true,
+  "model": "haiku",
+  "prompt": "Why would a Docker container exit immediately after starting, and how do I debug it?"
+ },
+ {
+  "a_points": 8,
+  "b_covers": 7,
+  "b_error": false,
+  "model": "haiku",
+  "prompt": "Explain the CAP theorem in practical terms for choosing a database."
+ },
+ {
+  "a_points": 8,
+  "b_covers": 7,
+  "b_error": false,
+  "model": "haiku",
+  "prompt": "How should I store user passwords in a web app?"
+ },
+ {
+  "a_points": 8,
+  "b_covers": 6,
+  "b_error": false,
+  "model": "haiku",
+  "prompt": "What does 'async/await' actually do in JavaScript? Is it multithreading?"
+ },
+ {
+  "a_points": 8,
+  "b_covers": 5,
+  "b_error": false,
+  "model": "haiku",
+  "prompt": "My Python script uses 8GB RAM reading a 2GB CSV. How can I reduce memory?"
+ },
+ {
+  "a_points": 8,
+  "b_covers": 8,
+  "b_error": false,
+  "model": "haiku",
+  "prompt": "Give me a quick code review checklist for a pull request."
+ },
+ {
+  "a_points": 8,
+  "b_covers": 8,
+  "b_error": false,
+  "model": "haiku",
+  "prompt": "When should I use a message queue like Kafka vs just calling another service over HTTP?"
+ },
+ {
+  "a_points": 8,
+  "b_covers": 6,
+  "b_error": false,
+  "model": "haiku",
+  "prompt": "Explain what a race condition is with a small example and how to prevent it."
+ },
+ {
+  "a_points": 8,
+  "b_covers": 7,
+  "b_error": false,
+  "model": "sonnet",
+  "prompt": "What is the difference between a Python list and a tuple, and when should I use each?"
+ },
+ {
+  "a_points": 8,
+  "b_covers": 7,
+  "b_error": false,
+  "model": "sonnet",
+  "prompt": "My React component re-renders on every keystroke and the page feels slow. What are the likely causes and fixes?"
+ },
+ {
+  "a_points": 8,
+  "b_covers": 7,
+  "b_error": false,
+  "model": "sonnet",
+  "prompt": "Explain what a Postgres index is and when adding one can make writes slower."
+ },
+ {
+  "a_points": 8,
+  "b_covers": 8,
+  "b_error": true,
+  "model": "sonnet",
+  "prompt": "git says 'detached HEAD'. What does that mean and how do I get back to my branch without losing work?"
+ },
+ {
+  "a_points": 8,
+  "b_covers": 8,
+  "b_error": true,
+  "model": "sonnet",
+  "prompt": "Why would a Docker container exit immediately after starting, and how do I debug it?"
+ },
+ {
+  "a_points": 8,
+  "b_covers": 7,
+  "b_error": false,
+  "model": "sonnet",
+  "prompt": "Explain the CAP theorem in practical terms for choosing a database."
+ },
+ {
+  "a_points": 8,
+  "b_covers": 8,
+  "b_error": false,
+  "model": "sonnet",
+  "prompt": "How should I store user passwords in a web app?"
+ },
+ {
+  "a_points": 8,
+  "b_covers": 7,
+  "b_error": false,
+  "model": "sonnet",
+  "prompt": "What does 'async/await' actually do in JavaScript? Is it multithreading?"
+ },
+ {
+  "a_points": 8,
+  "b_covers": 8,
+  "b_error": false,
+  "model": "sonnet",
+  "prompt": "My Python script uses 8GB RAM reading a 2GB CSV. How can I reduce memory?"
+ },
+ {
+  "a_points": 8,
+  "b_covers": 8,
+  "b_error": false,
+  "model": "sonnet",
+  "prompt": "Give me a quick code review checklist for a pull request."
+ },
+ {
+  "a_points": 8,
+  "b_covers": 7,
+  "b_error": false,
+  "model": "sonnet",
+  "prompt": "When should I use a message queue like Kafka vs just calling another service over HTTP?"
+ },
+ {
+  "a_points": 8,
+  "b_covers": 8,
+  "b_error": false,
+  "model": "sonnet",
+  "prompt": "Explain what a race condition is with a small example and how to prevent it."
+ }
+]

@@ -163,7 +163,7 @@ class Scanner:
                                                        if not p.endswith(".py")),
                                   all_deps, code_findings)
         router = Router(self.settings, self.store, self.registry, self.provider, budget,
-                        run_id, versions, casefile, self._rules_digest())
+                        run_id, versions, casefile, self._rules_digest(), mode=mode)
         self.last_router = router
         router.emit = self.emit
         self.emit(f"[pre-router] {len(needs_llm)} finding(s) need a model; "

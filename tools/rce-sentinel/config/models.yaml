@@ -15,6 +15,10 @@
 # model_available, or Ollama answers) or its API key env var is set.
 # `context_tokens` (default 128000) keeps prompts that do not fit away from small models.
 # `family` drives cross-family verification: the verifier never shares the finder's family.
+# `egress` (default: true for cloud providers and Ollama `-cloud` models) marks models whose
+# prompts leave the machine; routing.local_only removes them.
+# Which model in a tier wins, and which tier the cascade starts at, is decided by expected
+# cost (price, waiting time, measured escalation and overturn rates): see config/policy.yaml.
 
 providers:
   apfel:     # Apple's on-device Foundation Model via https://github.com/Arthur-Ficial/apfel
@@ -40,30 +44,166 @@ providers:
   zai:
     base_url: https://api.z.ai/api/paas/v4
     api_key_env: ZAI_API_KEY
-  openrouter:
+  openrouter:   # one key, many models; provider-level routing done server-side
     base_url: https://openrouter.ai/api/v1
     api_key_env: OPENROUTER_API_KEY
+    gateway: true           # picks the serving model/provider; the trace shows which
+    kind: openrouter        # adds provider.sort (from the profile), provider.max_price,
+                            # data_collection: deny, the `models` fallback list, and usage cost
+    max_price_margin: 1.25  # cap = configured price x 1.25 (USD per 1M tokens)
+    data_collection: deny
+  opencode:     # OpenCode Zen: one key, many models (https://opencode.ai/v2/docs/console/models/)
+    base_url: https://opencode.ai/inference/openai/v1   # chat-completions models
+    api_key_env: OPENCODE_API_KEY
+    base_urls:   # models with `api:` set use their vendor's own API on Zen
+      messages: https://opencode.ai/inference/anthropic/v1    # Claude
+      responses: https://opencode.ai/inference/openai/v1      # GPT
+      gemini: https://opencode.ai/inference/google/v1beta     # Gemini
+  seat:   # Claude through your Claude Code login (no API key): headless `claude -p`,
+          # every tool off, settings/hooks/MCP skipped. Cost is the CLI's API-equivalent
+          # figure, not a bill. Probed via api.anthropic.com (a 401 there means reachable).
+    kind: claude-cli
+    base_url: https://api.anthropic.com/v1
+    max_budget_usd: 2.0     # per call ceiling passed to the CLI
+  switchyard:   # optional local NeMo Switchyard proxy (Apache-2.0, pre-alpha; upstream says
+                # "demos and local evaluation only"). Start it with
+                # `switchyard-server --config routes.toml --port 4000`; models are its routes
+                # ("switchyard/<route id>"). Put one model family per route so cross-family
+                # verification still holds, and use it for equal-capability models only.
+    base_url_env: SWITCHYARD_BASE_URL
+    base_url: http://127.0.0.1:4000/v1
+    local: true             # the proxy is local and probed like apfel/Ollama
+    egress: true            # but it forwards to cloud models, so local_only removes it
+    gateway: true
 
 tiers:
+# `quality` (0-1) and `tps` (output tokens/s) are rough priors set by model class
+# (flagship > mid-size > flash > small), not measured. Dev routing uses them until a model
+# has `routing.min_samples` real outcomes for a task type; then its own numbers win.
   tier1:   # triage, classification, cheap confirmation
     # Base model: Apple Foundation Model (~3B, on-device, free, 4096-token context).
-    - { id: apple-foundationmodel, provider: apfel, family: apple, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 4096 }
-    - { id: "qwen2.5:3b", provider: ollama, family: qwen, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 4096 }  # ollama pull qwen2.5:3b
-    - { id: gemini-3.5-flash-lite, provider: gemini, family: google, price_in: 0.30, price_out: 2.50, price_cached_in: 0.03 }
+    - { id: apple-foundationmodel, provider: apfel, family: apple, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 4096, quality: 0.15, tps: 25 }
+    - { id: "qwen2.5:3b", provider: ollama, family: qwen, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 4096, quality: 0.25, tps: 40 }  # ollama pull qwen2.5:3b
+    - { id: "qwen2.5-coder:7b", provider: ollama, family: qwen, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 4096, uses: [dev, bench], quality: 0.35, tps: 20 }  # ollama pull qwen2.5-coder:7b; not in the scanner until measured there
+    - { id: gemini-3.5-flash-lite, provider: gemini, family: google, price_in: 0.30, price_out: 2.50, price_cached_in: 0.03, quality: 0.5, tps: 150 }
+    # OpenCode Zen (prices from opencode's models.dev snapshot, 2026-10-27; verify on Zen).
+    # Free Zen models may be used to improve the model: keep private code off them.
+    # `uses: [dev]` keeps them to prompt routing; add `scan` to let the scanner send code.
+    - { id: big-pickle, provider: opencode, family: big-pickle, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 200000, uses: [dev], quality: 0.5, tps: 80 }
+    - { id: deepseek-v4.1-flash-free, provider: opencode, family: deepseek, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 200000, uses: [dev], quality: 0.6, tps: 80 }
+    - { id: glm-5.3-flash-free, provider: opencode, family: zhipu, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 200000, uses: [dev], quality: 0.55, tps: 90 }
+    - { id: nemotron-3.5-lightning-free, provider: opencode, family: nvidia, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 262144, uses: [dev], quality: 0.5, tps: 150 }
+    - { id: glm-5.3-flash, provider: opencode, family: zhipu, price_in: 0.15, price_out: 0.50, price_cached_in: 0.03, context_tokens: 1000000, uses: [dev], quality: 0.55, tps: 120 }
+    # Paid frontier models on Zen, small and cheap ones (prices: models.dev snapshot).
+    - { id: claude-haiku-5-5, provider: opencode, api: messages, family: anthropic, price_in: 0.10, price_out: 0.50, price_cached_in: 0.01, context_tokens: 1000000, uses: [dev], quality: 0.62, tps: 120 }
+    - { id: gpt-6-luna, provider: opencode, api: responses, family: openai, price_in: 0.10, price_out: 0.50, price_cached_in: 0.01, context_tokens: 1050000, uses: [dev], quality: 0.6, tps: 130 }
+    # OpenRouter (one key; prices from models.dev snapshot 2026-10-27, verify on openrouter.ai).
+    - { id: "openai/gpt-6-luna", provider: openrouter, family: openai, price_in: 0.1, price_out: 0.5, price_cached_in: 0.01, context_tokens: 1050000, uses: [dev], quality: 0.6, tps: 130 }
+    - { id: "anthropic/claude-haiku-5.5", provider: openrouter, family: anthropic, price_in: 0.1, price_out: 0.5, price_cached_in: 0.01, context_tokens: 1000000, uses: [dev], quality: 0.62, tps: 120 }
+    - { id: "deepseek/deepseek-v4.1-flash", provider: openrouter, family: deepseek, price_in: 0.14, price_out: 0.42, price_cached_in: 0.0042, context_tokens: 1048576, uses: [dev], quality: 0.62, tps: 80 }
+    - { id: "z-ai/glm-5.3-flash", provider: openrouter, family: zhipu, price_in: 0.15, price_out: 0.5, price_cached_in: 0.03, context_tokens: 1048576, uses: [dev], quality: 0.55, tps: 120 }
+    # Claude via the seat (Anthropic prices, checked 2026-11-11 in the Claude API docs:
+    # cache writes 1.25x/2x input, reads 0.1x; Haiku 5.5 costs 5x above 100K prompt tokens).
+    - { id: seat/claude-haiku-5-5, provider: seat, family: anthropic, price_in: 0.10, price_out: 0.50, price_cached_in: 0.01, long_above: 100000, long_scale: 5, context_tokens: 1000000, uses: [dev], quality: 0.62, tps: 120 }
   tier2:   # taint tracing, reachability, uncertain cases, merge
     # Ollama cloud model: runs on ollama.com, so prompts leave the machine; needs
     # `ollama signin`. Checked 2026-10-24 on the Free plan: gemma4:31b-cloud answers, while
     # deepseek-v4.1-flash:cloud returns HTTP 402 (Pro plan only), so it is not listed.
     # On a 401/402/403 the router drops a model for the run, tells the user, and switches
     # to the next model in this tier.
-    - { id: "gemma4:31b-cloud", provider: ollama, family: gemma, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0 }
-    - { id: deepseek-v4-flash, provider: deepseek, family: deepseek, price_in: 0.14, price_out: 0.28, price_cached_in: 0.014 }  # id: verify
-    - { id: gemini-3.8-flash, provider: gemini, family: google, price_in: 0.75, price_out: 3.75, price_cached_in: 0.075 }
+    - { id: "gemma4:31b-cloud", provider: ollama, family: gemma, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, quality: 0.6, tps: 50 }
+    - { id: deepseek-v4-flash, provider: deepseek, family: deepseek, price_in: 0.14, price_out: 0.28, price_cached_in: 0.014, quality: 0.62, tps: 80 }  # id: verify
+    - { id: gemini-3.8-flash, provider: gemini, family: google, price_in: 0.75, price_out: 3.75, price_cached_in: 0.075, quality: 0.72, tps: 140 }
+    - { id: deepseek-v4.1-flash, provider: opencode, family: deepseek, price_in: 0.30, price_out: 1.20, price_cached_in: 0.006, context_tokens: 1000000, uses: [dev], quality: 0.62, tps: 80 }
+    - { id: minimax-m3, provider: opencode, family: minimax, price_in: 0.30, price_out: 1.20, price_cached_in: 0.06, context_tokens: 512000, uses: [dev], quality: 0.68, tps: 70 }
+    - { id: kimi-k2.5, provider: opencode, family: moonshot, price_in: 0.60, price_out: 3.00, price_cached_in: 0.10, context_tokens: 262144, uses: [dev], quality: 0.7, tps: 45 }
+    - { id: mistral-large-4, provider: opencode, family: mistral, price_in: 0.68, price_out: 2.09, price_cached_in: 0.07, context_tokens: 524288, uses: [dev], quality: 0.66, tps: 60 }
+    # Optional, through a local Switchyard proxy (config/switchyard/routes.toml). Used only when
+    # SWITCHYARD_BASE_URL is reachable and lists the route. The family the second opinion must
+    # avoid is taken from the model Switchyard reports it used, not from this line.
+    # - { id: switchyard-stage, provider: switchyard, family: switchyard, price_in: 0.0, price_out: 0.0 }
+    - { id: gpt-5.4-mini, provider: opencode, api: responses, family: openai, price_in: 0.75, price_out: 4.50, price_cached_in: 0.075, context_tokens: 400000, uses: [dev], quality: 0.7, tps: 110 }
+    - { id: gemini-3.8-flash, provider: opencode, api: gemini, family: google, price_in: 1.50, price_out: 7.50, price_cached_in: 0.15, context_tokens: 1048576, uses: [dev], quality: 0.72, tps: 140 }
+    # OpenRouter
+    - { id: "minimax/minimax-m3", provider: openrouter, family: minimax, price_in: 0.3, price_out: 1.2, price_cached_in: 0.06, context_tokens: 1048576, uses: [dev], quality: 0.68, tps: 70 }
+    - { id: "moonshotai/kimi-k2.7-code", provider: openrouter, family: moonshot, price_in: 0.56, price_out: 3.1, price_cached_in: 0.15, context_tokens: 262144, uses: [dev], quality: 0.76, tps: 45 }
+    - { id: "openai/gpt-5.4-mini", provider: openrouter, family: openai, price_in: 0.75, price_out: 4.5, price_cached_in: 0.075, context_tokens: 400000, uses: [dev], quality: 0.7, tps: 110 }
+    - { id: "google/gemini-3.8-flash", provider: openrouter, family: google, price_in: 0.825, price_out: 4.125, price_cached_in: 0.0825, context_tokens: 1048576, uses: [dev], quality: 0.72, tps: 140 }
+    # Ollama cloud (listed on ollama.com/search?c=cloud, 2026-11-11). Billed by Ollama
+    # usage credits, not per token here, so price 0 means "not metered by us". On
+    # 2026-11-11 the account had no credits: every call returned "Add usage credits".
+    # `uses: [bench]` keeps them out of routing until the benchmark has measured them.
+    # Run `ollama pull <id>` once (manifest only) so the local server lists them.
+    - { id: "deepseek-v4.1-flash:cloud", provider: ollama, family: deepseek, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 262144, uses: [bench], quality: 0.62, tps: 80 }
+    - { id: "glm-5.3-flash:cloud", provider: ollama, family: zhipu, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 262144, uses: [bench], quality: 0.55, tps: 120 }
+    - { id: "minimax-m3.1-flash:cloud", provider: ollama, family: minimax, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 262144, uses: [bench], quality: 0.62, tps: 90 }
+    - { id: "mimo-v2.6-flash:cloud", provider: ollama, family: xiaomi, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 262144, uses: [bench], quality: 0.6, tps: 100 }
+    - { id: "minimax-m3:cloud", provider: ollama, family: minimax, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 262144, uses: [bench], quality: 0.68, tps: 70 }
   tier3:   # critical findings, exploit-path reasoning, fix patches on retry
-    - { id: kimi-k2.6, provider: moonshot, family: moonshot, price_in: 0.95, price_out: 4.00, price_cached_in: 0.19 }  # id: verify
-    - { id: glm-5, provider: zai, family: zhipu, price_in: 1.00, price_out: 3.20, price_cached_in: 0.20 }  # id: verify
+    # Optional, through OpenRouter with server-side fallbacks (ids: verify on openrouter.ai).
+    # Keep fallbacks in the same family, or cross-family verification no longer holds:
+    # - { id: "moonshotai/kimi-k2.6", provider: openrouter, family: moonshot, price_in: 0.95, price_out: 4.00, fallbacks: ["moonshotai/kimi-k2.5"] }
+    - { id: kimi-k2.6, provider: moonshot, family: moonshot, price_in: 0.95, price_out: 4.00, price_cached_in: 0.19, quality: 0.76, tps: 40 }  # id: verify
+    - { id: glm-5, provider: zai, family: zhipu, price_in: 1.00, price_out: 3.20, price_cached_in: 0.20, quality: 0.74, tps: 50 }  # id: verify
+    - { id: kimi-k2.7-code, provider: opencode, family: moonshot, price_in: 0.95, price_out: 4.00, price_cached_in: 0.19, context_tokens: 262144, uses: [dev], quality: 0.78, tps: 45 }
+    - { id: glm-5.3, provider: opencode, family: zhipu, price_in: 1.40, price_out: 4.40, price_cached_in: 0.26, context_tokens: 1000000, uses: [dev], quality: 0.8, tps: 50 }
+    - { id: deepseek-v4-pro, provider: opencode, family: deepseek, price_in: 1.74, price_out: 3.48, price_cached_in: 0.145, context_tokens: 1000000, uses: [dev], quality: 0.78, tps: 35 }
+    - { id: claude-sonnet-5-5, provider: opencode, api: messages, family: anthropic, price_in: 2.00, price_out: 10.00, price_cached_in: 0.20, context_tokens: 1000000, uses: [dev], quality: 0.88, tps: 60 }
+    - { id: claude-opus-5-5, provider: opencode, api: messages, family: anthropic, price_in: 4.00, price_out: 20.00, price_cached_in: 0.20, context_tokens: 1000000, uses: [dev], quality: 0.93, tps: 40 }
+    - { id: gpt-6.1-sol, provider: opencode, api: responses, family: openai, price_in: 2.00, price_out: 10.00, price_cached_in: 0.10, context_tokens: 1050000, uses: [dev], quality: 0.9, tps: 60 }
+    - { id: gemini-4-argon, provider: opencode, api: gemini, family: google, price_in: 2.00, price_out: 10.00, price_cached_in: 0.10, context_tokens: 1048576, uses: [dev], quality: 0.88, tps: 70 }
+    - { id: qwen3.8-max, provider: opencode, family: qwen, price_in: 2.00, price_out: 6.00, price_cached_in: 0.25, context_tokens: 262144, uses: [dev], quality: 0.8, tps: 45 }
+    # OpenRouter
+    - { id: "deepseek/deepseek-v4-pro", provider: openrouter, family: deepseek, price_in: 0.955, price_out: 1.911, price_cached_in: 0.0796, context_tokens: 1048576, uses: [dev], quality: 0.78, tps: 35 }
+    - { id: "anthropic/claude-sonnet-5.5", provider: openrouter, family: anthropic, price_in: 2.0, price_out: 10.0, price_cached_in: 0.1, context_tokens: 1000000, uses: [dev], quality: 0.88, tps: 60 }
+    - { id: "openai/gpt-6.1-sol", provider: openrouter, family: openai, price_in: 2.0, price_out: 10.0, price_cached_in: 0.1, context_tokens: 1050000, uses: [dev], quality: 0.9, tps: 60 }
+    - { id: "google/gemini-4-argon", provider: openrouter, family: google, price_in: 2.0, price_out: 10.0, price_cached_in: 0.1, context_tokens: 1048576, uses: [dev], quality: 0.88, tps: 70 }
+    - { id: "anthropic/claude-opus-5.5", provider: openrouter, family: anthropic, price_in: 4.0, price_out: 20.0, price_cached_in: 0.2, context_tokens: 1000000, uses: [dev], quality: 0.93, tps: 40 }
+    - { id: seat/claude-sonnet-5-5, provider: seat, family: anthropic, price_in: 2.0, price_out: 10.0, price_cached_in: 0.20, context_tokens: 1000000, uses: [dev], quality: 0.88, tps: 60 }
+    - { id: seat/claude-opus-5-5, provider: seat, family: anthropic, price_in: 4.0, price_out: 20.0, price_cached_in: 0.20, context_tokens: 1000000, uses: [dev], quality: 0.93, tps: 40 }
+    # Ollama cloud, larger models (see the tier2 note).
+    - { id: "kimi-k2.6:cloud", provider: ollama, family: moonshot, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 262144, uses: [bench], quality: 0.76, tps: 40 }
+    - { id: "kimi-k2.7-code:cloud", provider: ollama, family: moonshot, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 262144, uses: [bench], quality: 0.78, tps: 45 }
+    - { id: "glm-5.3:cloud", provider: ollama, family: zhipu, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 262144, uses: [bench], quality: 0.8, tps: 50 }
+    - { id: "deepseek-v4-pro:cloud", provider: ollama, family: deepseek, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 262144, uses: [bench], quality: 0.78, tps: 35 }
+    - { id: "mistral-large-4:cloud", provider: ollama, family: mistral, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 262144, uses: [bench], quality: 0.66, tps: 60 }
+    - { id: "mimo-v2.6-pro:cloud", provider: ollama, family: xiaomi, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 262144, uses: [bench], quality: 0.75, tps: 50 }
+    - { id: "nemotron-3-super:cloud", provider: ollama, family: nvidia, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 262144, uses: [bench], quality: 0.7, tps: 60 }
+    - { id: "nemotron-3-ultra:cloud", provider: ollama, family: nvidia, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 262144, uses: [bench], quality: 0.75, tps: 40 }
+    - { id: "kimi-k3:cloud", provider: ollama, family: moonshot, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 262144, uses: [bench], quality: 0.8, tps: 40 }
+    - { id: "kimi-k3.1-pro:cloud", provider: ollama, family: moonshot, price_in: 0.0, price_out: 0.0, price_cached_in: 0.0, context_tokens: 262144, uses: [bench], quality: 0.82, tps: 35 }
+    # Baseline to beat, benchmark only: never routed to. Cost comes from OpenRouter's usage.
+    - { id: "openrouter/auto", provider: openrouter, family: openrouter, price_in: 0, price_out: 0, context_tokens: 1000000, uses: [bench] }
+
+# Decision model for prompt pre-eval (`rce-sentinel route`): TypeSafe Jev returns
+# probabilities, no text. $0.042 per 1M input tokens, output free (models.dev, 2026-10-14).
+# Used only when the free rule tagger is unsure. The first entry whose key is set wins.
+decision:
+  - { id: jev-1.13-free, provider: opencode, base_url: "https://opencode.ai/inference/systemone/v1", timeout_s: 5, uses: [dev] }
+  - { id: typesafe/jev-1.14, provider: openrouter, timeout_s: 5 }
 
 # The naive baseline the cost report compares against: every unit judged by this model, no caches.
+# `rce-sentinel bench run`: default models (cheap to frontier, plus the openrouter/auto
+# baseline) and the judges that grade rubrics; a judge never grades its own family.
+bench:
+  models: ["openai/gpt-6-luna", "deepseek/deepseek-v4.1-flash", "moonshotai/kimi-k2.7-code",
+           "google/gemini-3.8-flash", "anthropic/claude-sonnet-5.5", "openai/gpt-6.1-sol",
+           "anthropic/claude-opus-5.5", "openrouter/auto"]
+  judges: ["anthropic/claude-sonnet-5.5", "openai/gpt-6.1-sol", "google/gemini-4-argon"]
+  # `--set seat`: no OpenRouter. Claude through your login plus free local models.
+  sets:
+    seat:
+      # gemma4:31b-cloud asked for paid credits on 2026-11-11, so it is left out.
+      models: ["qwen2.5:3b", "qwen2.5-coder:7b", "apple-foundationmodel",
+               "seat/claude-haiku-5-5", "seat/claude-sonnet-5-5", "seat/claude-opus-5-5"]
+      judges: ["seat/claude-sonnet-5-5", "seat/claude-opus-5-5"]
+      same_family_judge: true   # only one strong family here; the judge is never the model
+    ollama-cloud:   # needs Ollama usage credits; Claude via your login as the reference
+      models: ["deepseek-v4.1-flash:cloud", "glm-5.3-flash:cloud", "minimax-m3.1-flash:cloud", "mimo-v2.6-flash:cloud", "minimax-m3:cloud", "kimi-k2.6:cloud", "kimi-k2.7-code:cloud", "glm-5.3:cloud", "deepseek-v4-pro:cloud", "mistral-large-4:cloud", "mimo-v2.6-pro:cloud", "nemotron-3-super:cloud", "nemotron-3-ultra:cloud", "kimi-k3:cloud", "kimi-k3.1-pro:cloud",
+               "seat/claude-haiku-5-5", "seat/claude-sonnet-5-5", "seat/claude-opus-5-5"]
+      judges: ["seat/claude-sonnet-5-5", "seat/claude-opus-5-5"]
+      same_family_judge: true
+
 baseline_model: kimi-k2.6
 
 # Provider prompt caches expire; a prefix used within this window counts as warm.

@@ -1,0 +1,798 @@
+# Dev-prompt benchmark. Every item runs on every model; replies are graded by the
+# deterministic checks (must / must_not, case-insensitive regex) and, when a judge is set
+# in models.yaml `bench.judges`, by the rubric. Generated code is never executed.
+# Grow toward 150-200 items to tighten the accuracy interval (see README).
+name: dev
+version: 1
+items:
+  # --- chore ------------------------------------------------------------------------
+  - id: chore-commit-msg
+    prompt: "Write a commit message for this staged change: renamed getUser to fetchUser in api/users.ts and updated its 4 callers."
+    must: ['fetchUser', '^\W*\w.{0,72}$|\n']
+    must_not: ['```(python|ts|js)']
+    rubric: "Imperative subject line under 72 chars naming the rename; optional short body. No code."
+  - id: chore-commit-msg-fix
+    prompt: "Write a conventional commit message for a fix that stops the login form submitting twice on double click."
+    must: ['^\W*fix(\(.+\))?:', 'double|twice']
+    rubric: "Conventional commit 'fix:' prefix, describes double submission."
+  - id: chore-gitignore
+    prompt: "Give me a .gitignore for a Python project using venv, pytest and mypy."
+    must: ['\.venv|venv/', '__pycache__', '\.pytest_cache', '\.mypy_cache']
+    rubric: "Covers virtualenv, bytecode, pytest and mypy caches."
+  - id: chore-rename-var
+    prompt: "Rename the variable `tmp` to `retry_count` in this snippet: `tmp = 0\nwhile tmp < 3:\n    tmp += 1`"
+    must: ['retry_count = 0', 'retry_count < 3', 'retry_count \+= 1']
+    must_not: ['\btmp\b']
+  - id: chore-typo-readme
+    prompt: "Fix the typos in this README line: 'Instal the pakage with pip and then importt it.'"
+    must: ['Install', 'package', '\bimport\b']
+    must_not: ['pakage', 'importt']
+  - id: chore-changelog
+    prompt: "Write a CHANGELOG entry for version 2.3.0: added CSV export, fixed timezone bug in reports, dropped Python 3.8."
+    must: ['2\.3\.0', 'CSV', 'time ?zone', '3\.8']
+    rubric: "Keep-a-changelog style sections (Added/Fixed/Removed) for the three changes."
+  - id: chore-pr-title
+    prompt: "Suggest a short PR title for: adds retry with exponential backoff to the payment webhook client."
+    must: ['retr', 'backoff|webhook']
+  - id: chore-json-format
+    prompt: 'Pretty-print this JSON with 2-space indent: {"a":1,"b":{"c":[1,2]}}'
+    must: ['\n  "a": 1', '"c": \[']
+  - id: chore-sort-imports
+    prompt: "Sort these Python imports per isort defaults: import sys\nimport requests\nimport os\nfrom typing import Any"
+    must: ['import os\s+import sys']
+    rubric: "Stdlib group (os, sys, typing) before third-party (requests), alphabetical."
+  - id: chore-env-example
+    prompt: "Write a .env.example for an app that needs DATABASE_URL, REDIS_URL and a SECRET_KEY. No real values."
+    must: ['DATABASE_URL=', 'REDIS_URL=', 'SECRET_KEY=']
+    must_not: ['SECRET_KEY=\w{16,}']
+  - id: chore-docstring
+    prompt: "Add a docstring to: def clamp(x, lo, hi): return max(lo, min(x, hi))"
+    must: ['"""', 'def clamp']
+  - id: chore-license-header
+    prompt: "Write an MIT license header comment for a TypeScript file, copyright 2026 Acme Inc."
+    must: ['MIT', '2026', 'Acme']
+  - id: chore-yaml-fix
+    prompt: "This YAML fails to parse, fix it: 'services:\n  web:\n   image: nginx\n  ports:\n    - 80:80'"
+    must: ['services:', 'image: nginx', 'ports:']
+    rubric: "ports is indented under web at the same level as image; valid YAML."
+  - id: chore-semver
+    prompt: "Current version 1.4.2. I removed a public function. What is the next semver version and why?"
+    must: ['2\.0\.0']
+  - id: chore-makefile-target
+    prompt: "Add a Makefile target `lint` that runs ruff check on src and tests."
+    must: ['^lint:', 'ruff check']
+    rubric: "Recipe line is tab-indented."
+
+  # --- edit -------------------------------------------------------------------------
+  - id: edit-dark-mode
+    prompt: "Add a dark mode toggle to this React settings page component: function Settings() { return <div><h1>Settings</h1></div> }"
+    must: ['useState', 'dark', 'onClick|onChange']
+    rubric: "Toggle state, switches a theme class or style, keeps the heading."
+  - id: edit-add-param
+    prompt: "Add an optional `timeout` parameter (default 10 seconds) to this function and pass it to requests.get: def fetch(url): return requests.get(url).json()"
+    must: ['timeout\s*[:=]', 'requests\.get\(url,\s*timeout=timeout\)']
+  - id: edit-pagination
+    prompt: "Add limit/offset pagination to this FastAPI endpoint: @app.get('/items')\ndef items(): return db.all()"
+    must: ['limit', 'offset']
+    rubric: "Query params with sane defaults and bounds; slices or passes to the query."
+  - id: edit-ts-types
+    prompt: "Add TypeScript types to: function total(items) { return items.reduce((s, i) => s + i.price * i.qty, 0) }"
+    must: ['price:\s*number', 'qty:\s*number', '\):\s*number']
+  - id: edit-logging
+    prompt: "Replace the print calls with the logging module in: def run():\n    print('start')\n    work()\n    print('done')"
+    must: ['import logging', 'getLogger|logging\.(info|debug)']
+    must_not: ['print\(']
+  - id: edit-async
+    prompt: "Convert this to async using httpx.AsyncClient: def get_all(urls): return [httpx.get(u).text for u in urls]"
+    must: ['async def', 'AsyncClient', 'await']
+    rubric: "Concurrent requests (gather) preferred; client closed via async with."
+  - id: edit-flutter-button
+    prompt: "In Flutter, change this ElevatedButton to have rounded corners of radius 16 and an orange background: ElevatedButton(onPressed: go, child: Text('Go'))"
+    must: ['circular\(16', 'orange|0xFF']
+  - id: edit-swift-optional
+    prompt: "Make this Swift code safe when name is nil: let greeting = \"Hello, \" + user.name!"
+    must: ['\?\?|if let|guard let']
+    must_not: ['name!']
+  - id: edit-env-config
+    prompt: "Read the port from the PORT environment variable with a default of 8080 in this Node server: app.listen(3000)"
+    must: ['process\.env\.PORT', '8080']
+  - id: edit-sql-index
+    prompt: "Write the SQL to add an index for queries filtering orders by customer_id and sorting by created_at desc."
+    must: ['CREATE INDEX', 'customer_id', 'created_at']
+
+  # --- debug ------------------------------------------------------------------------
+  - id: debug-keyerror
+    prompt: "Why does this raise KeyError and how do I fix it? config = {'host': 'x'}\nport = config['port']"
+    must: ['KeyError|key', '\.get\(|in config']
+  - id: debug-off-by-one
+    prompt: "This should return the last 3 items but returns 2. Fix it: def last3(xs): return xs[len(xs)-2:]"
+    must: ['xs\[-3:\]|len\(xs\)\s*-\s*3']
+  - id: debug-mutable-default
+    prompt: "Calling add('a') twice returns ['a', 'a'] on the second call. Why? def add(x, items=[]): items.append(x); return items"
+    must: ['mutable|shared|same list', 'None']
+  - id: debug-js-this
+    prompt: "In this JS class, `this.count` is undefined inside the click handler. Why? class C { constructor(){ this.count=0; btn.addEventListener('click', this.inc) } inc(){ this.count++ } }"
+    must: ['bind|arrow']
+  - id: debug-async-forget
+    prompt: "My function logs a Promise instead of the data: async function load(){ const r = fetch(url); console.log(r.json()) }"
+    must: ['await fetch', 'await r\.json\(\)']
+  - id: debug-race
+    prompt: "Two threads increment a shared counter 1,000,000 times each in Python and the result is less than 2,000,000. Explain and fix."
+    must: ['Lock|lock', 'atomic|race']
+    rubric: "Explains read-modify-write race and fixes with threading.Lock (GIL does not make += atomic)."
+  - id: debug-float
+    prompt: "Why does 0.1 + 0.2 == 0.3 return false in JavaScript and how should a calculator app avoid it?"
+    must: ['binary|floating', 'decimal|epsilon|integer']
+  - id: debug-sql-n-plus-one
+    prompt: "Our Django view takes 4 seconds listing 200 orders with their customer names. The template does order.customer.name. Fix it."
+    must: ['select_related']
+  - id: debug-react-loop
+    prompt: "This React component re-renders forever. Why? function P(){ const [d,setD]=useState(); useEffect(()=>{ fetch('/a').then(r=>r.json()).then(setD) }); return <div/> }"
+    must: ['dependency|\[\]']
+  - id: debug-traceback
+    prompt: "Traceback: TypeError: can only concatenate str (not \"int\") to str on line `msg = 'count: ' + n`. Fix it."
+    must: ['str\(n\)|f["'']count: \{n\}']
+  - id: debug-memory-leak
+    prompt: "Node service memory grows until OOM. We add a listener to an EventEmitter on every HTTP request. Diagnose and fix."
+    must: ['listener', 'removeListener|off\(|once\(']
+  - id: debug-flutter-setstate
+    prompt: "Flutter error: setState() called after dispose(). It happens when an HTTP call finishes after leaving the screen. Fix it."
+    must: ['mounted']
+  - id: debug-swift-main-thread
+    prompt: "SwiftUI warning: Publishing changes from background threads is not allowed. It comes from a URLSession completion handler updating @Published. Fix it."
+    must: ['MainActor|DispatchQueue\.main']
+  - id: debug-deadlock
+    prompt: "Our Postgres app deadlocks when two transactions transfer money between the same two accounts in opposite directions. Explain and fix."
+    must: ['order|ordering|sorted', 'lock']
+    rubric: "Lock rows in a consistent order (e.g. by account id), or retry on deadlock."
+  - id: debug-hard-heisenbug
+    prompt: "A Go service sometimes returns another user's data under load. Handlers store the current user in a package-level variable set by middleware. Find the bug and redesign."
+    must: ['context|ctx', 'global|package-level|shared']
+    rubric: "Identifies data race on shared variable; passes user via request context."
+
+  # --- test -------------------------------------------------------------------------
+  - id: test-unit-slugify
+    prompt: "Write pytest unit tests for slugify(s) which lowercases, trims, and replaces runs of non-alphanumerics with single dashes."
+    must: ['def test_', 'slugify\(', 'assert']
+    rubric: "Covers case, trimming, collapsing separators, and an edge case like empty string."
+  - id: test-jest-calc
+    prompt: "Write Jest unit tests for a calculator add(a, b) that must return '0.3' for add('0.1', '0.2')."
+    must: ['(test|it)\(', "expect\\(add\\(['\"]0\\.1['\"],\\s*['\"]0\\.2['\"]\\)\\)", '0\.3']
+  - id: test-parametrize
+    prompt: "Rewrite these as one parametrized pytest test: def test_a(): assert is_even(2)\ndef test_b(): assert not is_even(3)\ndef test_c(): assert is_even(0)"
+    must: ['pytest\.mark\.parametrize', 'is_even']
+  - id: test-mock-http
+    prompt: "Write a pytest test for get_weather(city) which calls requests.get on an API; mock the HTTP call."
+    must: ['mock|monkeypatch|responses|patch', 'get_weather']
+  - id: test-flutter-widget
+    prompt: "Write a Flutter widget test that taps a '+' button and checks a counter text goes from 0 to 1."
+    must: ['testWidgets', "tap", "find\\.text\\(['\"]1['\"]\\)"]
+  - id: test-xctest
+    prompt: "Write an XCTest that checks a Calculator().factorial(5) returns 120 and factorial(-1) throws."
+    must: ['XCTest', 'XCTAssertEqual', 'XCTAssertThrows']
+  - id: test-property
+    prompt: "Write a Hypothesis property-based test that reversing a list twice returns the original."
+    must: ['hypothesis', '@given', 'st\.lists']
+  - id: test-edge-cases
+    prompt: "List the edge cases you would test for a function parse_duration('1h30m') -> seconds, then write the pytest tests."
+    must: ['def test_', 'parse_duration']
+    rubric: "Includes invalid input, zero, missing units, large values, and mixed order."
+  - id: test-integration-db
+    prompt: "Write a pytest fixture that gives each test a fresh SQLite database with the schema from schema.sql applied."
+    must: ['@pytest\.fixture', 'sqlite3', 'schema\.sql']
+  - id: test-coverage-gap
+    prompt: "Here is a function and its only test. What is untested? def div(a, b):\n    if b == 0: raise ValueError('zero')\n    return a / b\n\ndef test_div(): assert div(4, 2) == 2"
+    must: ['ValueError|zero|b == 0']
+
+  # --- explain ----------------------------------------------------------------------
+  - id: explain-cache-headers
+    prompt: "Explain the difference between Cache-Control no-cache and no-store."
+    must: ['no-cache', 'no-store', 'revalidat']
+  - id: explain-git-rebase
+    prompt: "Explain git rebase vs merge to a junior developer, and when to use each."
+    must: ['rebase', 'merge', 'history']
+  - id: explain-big-o
+    prompt: "What is the time complexity of looking up a key in a Python dict, and what is the worst case?"
+    must: ['O\(1\)', 'O\(n\)']
+  - id: explain-cors
+    prompt: "Explain why my browser blocks a fetch to another domain while curl works."
+    must: ['CORS|origin', 'Access-Control-Allow-Origin']
+  - id: explain-react-keys
+    prompt: "Explain why React needs keys on list items and what goes wrong with index keys."
+    must: ['key', 'reorder|order|identity']
+  - id: explain-flutter-state
+    prompt: "Explain StatelessWidget vs StatefulWidget in Flutter."
+    must: ['StatelessWidget', 'StatefulWidget', 'setState']
+  - id: explain-swiftui-state
+    prompt: "Explain @State vs @Binding vs @StateObject in SwiftUI."
+    must: ['@State', '@Binding', '@StateObject']
+  - id: explain-idempotency
+    prompt: "Explain idempotency keys for a payments API and how the server should store them."
+    must: ['idempoten', 'key', 'retry|duplicate']
+  - id: explain-jwt
+    prompt: "Explain how JWT signature verification works and why alg=none is dangerous."
+    must: ['signature', 'none']
+  - id: explain-tcp-handshake
+    prompt: "Explain the TCP three-way handshake."
+    must: ['SYN', 'ACK']
+  - id: explain-regex
+    prompt: "Explain what this regex matches: ^(?=.*\\d)(?=.*[A-Z]).{8,}$"
+    must: ['digit|number', 'upper', '8']
+  - id: explain-event-loop
+    prompt: "Explain the JavaScript event loop, microtasks vs macrotasks, with the output order of: setTimeout(()=>log(1)); Promise.resolve().then(()=>log(2)); log(3)"
+    must: ['3[^0-9]+2[^0-9]+1|3, 2, 1']
+
+  # --- design -----------------------------------------------------------------------
+  - id: design-rate-limiter
+    prompt: "Design a rate limiter for a public API: 100 requests per minute per key, across 20 app servers."
+    must: ['redis|shared|central', 'token bucket|sliding window|fixed window']
+    rubric: "Shared store, algorithm choice with trade-offs, atomicity (Lua/INCR), headers like Retry-After."
+  - id: design-url-shortener
+    prompt: "Design a URL shortener handling 10k writes/s and 1M reads/s."
+    must: ['cache', 'id|hash|base62']
+    rubric: "ID generation without collisions, read caching, storage choice, redirect code."
+  - id: design-calc-architecture
+    prompt: "Design the architecture for a scientific calculator shipped as React Native, SwiftUI and Flutter apps that must give identical results."
+    must: ['shared|common|core', 'decimal|precision']
+    rubric: "Single source of truth for math rules (shared spec or core + conformance tests), decimal math, consistent rounding."
+  - id: design-billing-ledger
+    prompt: "Design the data model for a multi-tenant billing service with an event-sourced ledger, from scratch, production-grade."
+    must: ['tenant', 'event', 'ledger']
+    rubric: "Immutable ledger events, double entry, tenant isolation, idempotency, projections, currency handling."
+  - id: design-notifications
+    prompt: "Design a notification system that sends email, SMS and push with user preferences and retries."
+    must: ['queue', 'retry', 'preference']
+  - id: design-feature-flags
+    prompt: "Design a feature flag service with gradual rollouts and kill switches for mobile clients."
+    must: ['rollout|percentage', 'cache|offline|default']
+  - id: design-offline-sync
+    prompt: "Design offline-first sync for a notes app on iOS and Android with conflict resolution."
+    must: ['conflict', 'CRDT|last.write|vector|version']
+  - id: design-search
+    prompt: "Design product search with typo tolerance and filters for 5M products."
+    must: ['index', 'fuzzy|typo|n-gram|ngram']
+  - id: design-multi-region
+    prompt: "Design a multi-region active-active architecture for a chat service with ordering guarantees per conversation."
+    must: ['region', 'partition|shard|conversation']
+    rubric: "Per-conversation ordering via home region or partition key; replication and failover trade-offs."
+  - id: design-frontier-consensus
+    prompt: "Design a consensus-backed configuration store with linearizable reads, explain leader election, log compaction and how you would prove safety under network partitions."
+    must: ['leader', 'quorum|majority', 'snapshot|compaction']
+    rubric: "Raft or Paxos with correct quorum reasoning, read-index or lease reads, compaction, safety argument."
+  - id: design-api-versioning
+    prompt: "How should we version a public REST API used by mobile apps that update slowly?"
+    must: ['version', 'deprecat|backward']
+  - id: design-secrets
+    prompt: "Design secrets management for 40 microservices on Kubernetes, including rotation."
+    must: ['rotat', 'vault|secret manager|KMS|external secrets']
+  - id: design-tech-company
+    prompt: "I need you to make the best possible tech company: give the product strategy, team structure and engineering principles for year one."
+    must: ['product', 'team', 'principle']
+    rubric: "Concrete, prioritised plan; avoids generic platitudes."
+
+  # --- refactor ---------------------------------------------------------------------
+  - id: refactor-retry-dup
+    prompt: "Refactor to remove the duplicated retry logic across these two functions into one decorator: def a():\n  for i in range(3):\n    try: return call_a()\n    except IOError: time.sleep(2**i)\ndef b():\n  for i in range(3):\n    try: return call_b()\n    except IOError: time.sleep(2**i)"
+    must: ['def retry', '@retry|retry\(']
+  - id: refactor-extract-function
+    prompt: "Refactor this 30-line handler by extracting validation, persistence and notification into functions. Show the result. def handle(req):\n  if not req.email or '@' not in req.email: raise Bad()\n  if len(req.name) > 50: raise Bad()\n  u = User(email=req.email, name=req.name)\n  db.add(u); db.commit()\n  mail.send(req.email, 'welcome')\n  return u"
+    must: ['def validate', 'def (save|persist)', 'def (notify|send)']
+  - id: refactor-strategy
+    prompt: "Refactor this if/elif chain over payment methods (card, paypal, crypto) into a strategy pattern in TypeScript."
+    must: ['interface|abstract', 'card|Card', 'paypal|PayPal']
+  - id: refactor-callbacks
+    prompt: "Refactor this callback pyramid to async/await: getUser(id, (u) => getOrders(u, (o) => getItems(o, (i) => done(i))))"
+    must: ['async', 'await getUser|await getOrders']
+  - id: refactor-god-class
+    prompt: "We have a 2,000-line Python class OrderManager doing pricing, tax, inventory and emails across many files. Plan the refactor into modules without breaking callers."
+    must: ['pricing', 'tax', 'inventory', 'facade|deprecat|backward']
+    rubric: "Incremental plan: tests first, extract modules, keep a facade, deprecate gradually."
+  - id: refactor-dart-null-safety
+    prompt: "Migrate this Dart code to sound null safety: String greet(String name) { if (name == null) return 'Hi'; return 'Hi ' + name; }"
+    must: ['String\?']
+  - id: refactor-swift-combine
+    prompt: "Refactor this Swift completion-handler API to async/await: func load(completion: @escaping (Result<Data, Error>) -> Void)"
+    must: ['async throws', 'func load\(\) async']
+  - id: refactor-sql-orm
+    prompt: "Refactor raw SQL string concatenation into parameterised queries: cur.execute(\"SELECT * FROM users WHERE name = '\" + name + \"'\")"
+    must: ['%s|\?|:name']
+    must_not: ["' \\+ name"]
+
+  # --- build ------------------------------------------------------------------------
+  - id: build-cli-todo
+    prompt: "Build a small Python CLI todo app with add, list and done commands that stores tasks in a JSON file."
+    must: ['argparse|click|typer', 'json', 'def (add|list|done)']
+  - id: build-rn-counter
+    prompt: "Build a React Native counter screen with increment, decrement and reset buttons."
+    must: ['useState', 'Button|TouchableOpacity|Pressable', 'reset']
+  - id: build-flutter-login
+    prompt: "Build a Flutter login screen with email and password validation and a disabled submit button until valid."
+    must: ['TextFormField|TextField', 'validator|isValid', 'onPressed:\s*(null|.*\?)']
+  - id: build-swiftui-list
+    prompt: "Build a SwiftUI list of tasks with add and swipe-to-delete."
+    must: ['List', 'onDelete', '@State']
+  - id: build-rest-crud
+    prompt: "Build a FastAPI CRUD service for books (title, author, year) with in-memory storage and proper 404s."
+    must: ['FastAPI', '@app\.(get|post|put|delete)', '404']
+  - id: build-websocket-chat
+    prompt: "Build a minimal websocket chat server in Node with rooms."
+    must: ['WebSocket|ws|socket\.io', 'room']
+  - id: build-calc-rn
+    prompt: "Build a scientific calculator app in React Native with the cleanest possible UI: sin, cos, tan, log, ln, sqrt, power, factorial, DEG/RAD toggle and history."
+    must: ['sin', 'factorial|!', 'DEG|RAD', 'history']
+    rubric: "Complete runnable screen; decimal-safe math or explicit rounding; clean consistent styling."
+  - id: build-calc-flutter
+    prompt: "Build a scientific calculator app in Flutter with the cleanest possible UI: sin, cos, tan, log, ln, sqrt, power, factorial, DEG/RAD toggle and history."
+    must: ['sin', 'factorial|!', 'DEG|RAD', 'history']
+    rubric: "Complete runnable app; clean theme; correct angle mode handling."
+  - id: build-calc-swift
+    prompt: "Build a scientific calculator app in SwiftUI with the cleanest possible UI: sin, cos, tan, log, ln, sqrt, power, factorial, DEG/RAD toggle and history."
+    must: ['sin', 'factorial|!', 'DEG|RAD', 'history']
+    rubric: "Complete SwiftUI app; Decimal or explicit rounding; clean grid layout."
+  - id: build-calc-all
+    prompt: "Build a scientific calculator app with the best possible and cleanest UI for iOS and Android. It needs to be in React Native, Swift, and Flutter."
+    max_tokens: 16000
+    must: ['react', 'swift', 'flutter|dart']
+    rubric: "All three implementations present and complete, with consistent behaviour and styling across them."
+  - id: build-rate-limit-middleware
+    prompt: "Build an Express middleware implementing a token bucket rate limiter per API key, with tests."
+    must: ['token|bucket', 'next\(\)', '429']
+  - id: build-markdown-parser
+    prompt: "Build a tiny Markdown-to-HTML converter in Python supporting headings, bold, italics, links and lists, without libraries."
+    must: ['<h1>|<h\{', '<strong>|<b>', '<a href']
+  - id: build-scheduler
+    prompt: "Build a cron expression parser in TypeScript that returns the next 5 run times for an expression like '*/15 9-17 * * 1-5'."
+    must: ['function|=>', 'next']
+    rubric: "Handles ranges, steps, lists for all five fields; correct next-time computation."
+  - id: build-frontier-compiler
+    prompt: "Build a from-scratch interpreter in Python for a small language with integers, variables, if/while, functions and closures: tokenizer, parser to an AST, and evaluator."
+    max_tokens: 16000
+    must: ['class .*Token|def tokeni', 'class .*(Parser|Node)', 'def eval|def interpret']
+    rubric: "Working tokenizer, recursive-descent parser, AST, environments with closures."
+  - id: build-image-resizer
+    prompt: "Build a Go HTTP service that accepts an uploaded image and returns a 256px-wide thumbnail, with size limits."
+    must: ['net/http', 'image', 'MaxBytesReader|limit']
+  - id: build-dashboard
+    prompt: "Build a React dashboard page showing KPIs and a line chart from a /api/metrics endpoint, with loading and error states."
+    must: ['useEffect', 'loading', 'error']
+  - id: build-auth-flow
+    prompt: "Build email + password signup and login for a Flask app with hashed passwords and session cookies."
+    must: ['generate_password_hash|bcrypt|argon2', 'session']
+    must_not: ['password\s*==\s*']
+
+  # --- hard: multi-file builds (added 2026-11-11 to separate strong models) -----------
+  - id: hard-build-fastapi-auth
+    prompt: "Build a FastAPI service split into app/main.py, app/auth.py, app/models.py and tests/test_auth.py: email+password signup and login, bcrypt hashing, JWT access tokens (15 min) and refresh tokens (7 days) with rotation, and a dependency that protects /me. Give every file in full."
+    max_tokens: 16000
+    must: ['app/main\.py', 'app/auth\.py', 'app/models\.py', 'tests/test_auth\.py', 'bcrypt|passlib', 'refresh', 'Depends\(']
+    rubric: "All four files complete and consistent with each other; refresh tokens rotate (old one invalidated); /me rejects missing or expired tokens; tests cover signup, login, refresh rotation and an expired token."
+  - id: hard-build-react-query-crud
+    prompt: "Build a React + TypeScript todo app using TanStack Query against a REST API, in files src/api.ts, src/hooks/useTodos.ts, src/components/TodoList.tsx and src/App.tsx. Include optimistic updates with rollback on error for create, toggle and delete."
+    max_tokens: 16000
+    must: ['src/api\.ts', 'useTodos', 'TodoList\.tsx', 'onMutate', 'onError', 'setQueryData|invalidateQueries']
+    rubric: "Optimistic update in onMutate with snapshot, rollback in onError, settle with invalidate; types shared across files; no missing imports."
+  - id: hard-build-go-worker-pool
+    prompt: "Write a Go package with a bounded worker pool (worker.go), a job queue with retries and exponential backoff plus jitter (queue.go), graceful shutdown on SIGTERM that drains in-flight jobs (main.go), and table-driven tests (worker_test.go)."
+    max_tokens: 16000
+    must: ['worker\.go', 'queue\.go', 'main\.go', 'worker_test\.go', 'context\.|ctx', 'SIGTERM', 'sync\.WaitGroup|errgroup']
+    rubric: "Pool size is bounded; retries use backoff with jitter and a max; shutdown stops intake and waits for in-flight jobs with a timeout; tests are table-driven and race-safe."
+  - id: hard-build-cli-sync
+    prompt: "Build a Python CLI (package with cli.py, sync.py, state.py and tests) that syncs a local folder to S3: only uploads changed files by content hash, keeps state in SQLite, supports --dry-run and --delete, and retries throttled requests."
+    max_tokens: 16000
+    must: ['cli\.py', 'sync\.py', 'state\.py', 'sqlite3', 'dry.run', 'hash|sha256|md5', 'boto3']
+    rubric: "Change detection by content hash stored in SQLite; dry-run makes no writes; delete removes only remote files missing locally; throttling retried with backoff; tests mock S3."
+  - id: hard-build-flutter-offline
+    prompt: "Build a Flutter notes app with offline-first sync: lib/data/local_db.dart (sqflite), lib/data/api.dart, lib/data/sync_service.dart with last-write-wins conflict resolution by updated_at, lib/ui/notes_page.dart. Give every file."
+    max_tokens: 16000
+    must: ['local_db\.dart', 'api\.dart', 'sync_service\.dart', 'notes_page\.dart', 'sqflite', 'updated_?at']
+    rubric: "Writes go local first and queue for sync; sync merges both directions with last-write-wins on updated_at; deletions are tombstoned, not lost; UI reads from the local DB."
+  - id: hard-build-swift-networking
+    prompt: "Build a SwiftUI app module with Networking/APIClient.swift (async/await, typed errors, retry on 5xx), Models/User.swift (Codable with snake_case keys), ViewModels/UsersViewModel.swift (@MainActor, pagination) and Views/UsersView.swift (infinite scroll)."
+    max_tokens: 16000
+    must: ['APIClient\.swift', 'User\.swift', 'UsersViewModel\.swift', 'UsersView\.swift', 'async', '@MainActor', 'convertFromSnakeCase|CodingKeys']
+    rubric: "Async/await throughout; retries only on 5xx with a cap; view model on MainActor loads next page near the end of the list without duplicate requests."
+  - id: hard-build-postgres-migrations
+    prompt: "Design and write SQL migrations (001_init.sql, 002_add_orders.sql, 003_backfill.sql) and a Python runner (migrate.py) for a Postgres schema with users, orders and order_items, foreign keys, indexes for the common queries, and a zero-downtime backfill of a new NOT NULL column."
+    max_tokens: 16000
+    must: ['001_init\.sql', '002_add_orders\.sql', '003_backfill\.sql', 'migrate\.py', 'FOREIGN KEY|REFERENCES', 'CREATE INDEX', 'NOT NULL']
+    rubric: "New NOT NULL column added nullable, backfilled in batches, then constrained; runner records applied versions in a table and runs each migration in a transaction."
+  - id: hard-build-websocket-presence
+    prompt: "Build a Node.js + TypeScript WebSocket server (server.ts, presence.ts, rooms.ts) with rooms, presence (who is online), heartbeats that drop dead connections, and Redis pub/sub so it scales to several instances. Include a small client example."
+    max_tokens: 16000
+    must: ['server\.ts', 'presence\.ts', 'rooms\.ts', 'redis', 'ping|heartbeat', 'publish|subscribe']
+    rubric: "Presence stays correct across instances via Redis; heartbeat timeout removes dead sockets and broadcasts leave; rooms isolate messages."
+  - id: hard-build-rn-auth-flow
+    prompt: "Build a React Native (Expo, TypeScript) auth flow: screens/LoginScreen.tsx, screens/HomeScreen.tsx, auth/AuthContext.tsx with secure token storage (expo-secure-store), automatic token refresh on 401 in api/client.ts, and navigation that switches stacks on login state."
+    max_tokens: 16000
+    must: ['LoginScreen\.tsx', 'HomeScreen\.tsx', 'AuthContext\.tsx', 'client\.ts', 'SecureStore|expo-secure-store', '401']
+    rubric: "Tokens stored in SecureStore, never AsyncStorage; a single in-flight refresh shared by concurrent 401s; failed refresh logs out; navigation switches stacks."
+  - id: hard-build-event-sourcing
+    prompt: "Implement a minimal event-sourced bank account in Python: events.py, aggregate.py (apply/replay), store.py (append-only with optimistic concurrency by expected version), projections.py (balance read model) and tests."
+    max_tokens: 16000
+    must: ['events\.py', 'aggregate\.py', 'store\.py', 'projections\.py', 'expected_version|version', 'def test_']
+    rubric: "Append rejects a stale expected version; aggregate rebuilds state by replay; overdraft is rejected as a domain rule; projection rebuilds from the event log."
+  - id: hard-build-k8s-deploy
+    prompt: "Write Kubernetes manifests for a web API: deployment.yaml (3 replicas, readiness and liveness probes, resource limits, rolling update with maxUnavailable 0), service.yaml, hpa.yaml (CPU 70%), configmap.yaml and a PodDisruptionBudget."
+    max_tokens: 10000
+    must: ['kind: Deployment', 'readinessProbe', 'livenessProbe', 'maxUnavailable: 0', 'HorizontalPodAutoscaler', 'PodDisruptionBudget', 'resources:']
+    rubric: "Manifests are valid YAML and consistent (labels/selectors match); probes are different endpoints or thresholds; HPA targets the deployment; PDB keeps at least 2 pods."
+  - id: hard-build-plugin-system
+    prompt: "Build a Python plugin system: core/registry.py (entry-point discovery), core/hooks.py (typed hook specs with priorities), plugins/example_plugin.py and tests showing two plugins modifying the same hook in priority order, with one plugin failing without breaking the rest."
+    max_tokens: 16000
+    must: ['registry\.py', 'hooks\.py', 'example_plugin\.py', 'entry.points|importlib\.metadata', 'priorit', 'def test_']
+    rubric: "Discovery via entry points; hooks run in priority order; a failing plugin is isolated and reported; tests prove ordering and isolation."
+  - id: hard-build-graphql-dataloader
+    prompt: "Build a GraphQL API in TypeScript (schema.ts, resolvers.ts, loaders.ts) for authors and books where listing 50 books with their authors issues one author query, not 50. Show the DataLoader setup per request."
+    max_tokens: 12000
+    must: ['schema\.ts', 'resolvers\.ts', 'loaders\.ts', 'DataLoader', 'context']
+    rubric: "DataLoader created per request in context; batch function returns results in key order; N+1 removed; explains why per-request scope matters."
+  - id: hard-build-feature-flag-sdk
+    prompt: "Build a feature-flag SDK in TypeScript (client.ts, evaluate.ts, cache.ts, tests) with percentage rollouts that are sticky per user (hash-based), targeting rules, local caching with background refresh, and a safe default when the server is down."
+    max_tokens: 14000
+    must: ['client\.ts', 'evaluate\.ts', 'cache\.ts', 'hash|murmur|sha', 'default', 'describe\(|test\(']
+    rubric: "Rollout bucket is deterministic per user and flag; rules evaluate before rollout; stale cache served on failure; tests cover stickiness and the offline default."
+  - id: hard-build-calc-engine
+    prompt: "Build a calculator expression engine in Python: lexer.py, parser.py (precedence climbing, unary minus, right-associative ^, functions sin/cos/sqrt), evaluator.py and tests including 2^3^2, -2^2 and malformed input."
+    max_tokens: 12000
+    must: ['lexer\.py', 'parser\.py', 'evaluator\.py', 'def test_', '512', 'sqrt']
+    rubric: "2^3^2 == 512, -2^2 == -4, functions work, malformed input raises a clear error with position; no eval()."
+    must_not: ['\beval\(']
+
+  # --- hard: tricky debugging ---------------------------------------------------------
+  - id: hard-debug-asyncio-blocking
+    prompt: "Our FastAPI endpoint is fast alone but p99 latency explodes under load and all endpoints slow down together. The handler is `async def` and calls `requests.get` to an internal service and `time.sleep(0.1)` for rate limiting. Explain the cause and fix it."
+    must: ['event loop|blocking', 'httpx|aiohttp|run_in_executor|to_thread', 'asyncio\.sleep']
+    rubric: "Blocking calls inside async def stall the single event loop; fix with async client and asyncio.sleep (or a threadpool); explains why all endpoints degrade together."
+  - id: hard-debug-python-late-binding
+    prompt: "This prints 4 4 4 4 instead of 0 1 2 3. Why, and give two fixes: `fns = [lambda: i for i in range(4)]; print(*[f() for f in fns])`"
+    must: ['late.binding|closure', 'i=i|functools\.partial|default arg']
+    rubric: "Closures capture the variable, not the value, looked up at call time; fixes: default argument binding or partial/factory."
+  - id: hard-debug-react-stale-closure
+    prompt: "A React counter with `useEffect(() => { const id = setInterval(() => setCount(count + 1), 1000); return () => clearInterval(id); }, []);` goes to 1 and stops. Explain precisely and fix without adding count to the dependency array."
+    must: ['stale|closure', 'setCount\(\s*\w+\s*=>|setCount\(\s*\(\s*\w+\s*\)\s*=>']
+    rubric: "Effect closes over the initial count (0); functional updater setCount(c => c + 1) fixes it; dependency-array alternative would reset the interval."
+  - id: hard-debug-go-loopvar
+    prompt: "In Go 1.21 this sometimes prints the same id three times: `for _, j := range jobs { go func() { process(j.ID) }() }`. Explain, say what changes in Go 1.22, and fix for both."
+    must: ['loop variable|per.iteration|captur', '1\.22', 'j := j|func\(\s*\w+']
+    rubric: "Before 1.22 the loop variable is shared across iterations so goroutines see the last value; 1.22 gives per-iteration variables; fix by shadowing or passing as argument; mentions waiting for goroutines."
+  - id: hard-debug-sql-timezone
+    prompt: "Daily revenue in our report is off for orders placed between midnight and 5am. Column created_at is `timestamp without time zone` filled with UTC from the app; the report does `WHERE created_at::date = CURRENT_DATE` on a server in America/New_York. Find all the problems and fix the query."
+    must: ['timestamptz|time zone|AT TIME ZONE', 'UTC', 'CURRENT_DATE|range|>=']
+    rubric: "Naive UTC compared with a local CURRENT_DATE shifts the day boundary; fix by storing timestamptz or converting with AT TIME ZONE, and filtering a half-open UTC range so an index can be used."
+  - id: hard-debug-js-float-money
+    prompt: "Our cart total sometimes shows 0.30000000000000004 and one customer was charged 1 cent less than displayed after rounding. Prices are floats in dollars, summed, then `Math.round(total * 100) / 100`. Explain and fix end to end."
+    must: ['floating|binary|IEEE', 'cents|integer|minor units', 'Decimal|BigInt|integer']
+    rubric: "Binary floating point cannot represent most decimal fractions; store and compute money as integer cents (or a decimal library), round once at a defined step with a stated rounding mode."
+  - id: hard-debug-deadlock-locks
+    prompt: "Two Python threads: transfer(a, b) locks a then b; another transfer(b, a) runs at the same time and the app hangs. Explain the deadlock and give a fix that still allows concurrent transfers between different accounts."
+    must: ['deadlock', 'order|sorted|id', 'lock']
+    rubric: "Classic lock-ordering deadlock; acquire locks in a global order (e.g. by account id) or use try-lock with backoff; per-account locks keep unrelated transfers concurrent."
+  - id: hard-debug-memory-leak-node
+    prompt: "A Node.js API's memory grows ~50MB/hour until OOM. Code adds `process.on('uncaughtException', ...)` inside the request handler, caches responses in a module-level Map keyed by full URL with query string, and registers an EventEmitter listener per request. List each leak and how to confirm it with a heap snapshot."
+    must: ['listener', 'Map|cache', 'heap snapshot|--inspect|heapdump', 'LRU|TTL|evict|removeListener|off\(']
+    rubric: "Three leaks: per-request process/emitter listeners never removed, unbounded Map growth by unique query strings; fixes: register once/remove listeners, bounded LRU/TTL cache; confirm by comparing heap snapshots."
+  - id: hard-debug-flaky-test-order
+    prompt: "Our pytest suite passes alone but test_report fails when run after test_settings. test_settings does `settings.TIMEZONE = 'UTC'` directly and a module caches `TZ = settings.TIMEZONE` at import. Explain and fix both the test and the design."
+    must: ['monkeypatch|fixture', 'import time|at import|cache', 'isolation|order|shared state']
+    rubric: "Global state mutated without restore leaks between tests, and a value captured at import ignores later changes; use monkeypatch/fixtures that restore, and read the setting at call time."
+  - id: hard-debug-n-plus-one-hidden
+    prompt: "A Django view renders 100 orders and is slow even though we added select_related('customer'). The template shows order.customer.name and loops over order.items.all to show each product.name. Find every extra query and fix it."
+    must: ['prefetch_related', 'items', 'product']
+    rubric: "select_related fixes customer only; items is reverse FK/M2M needing prefetch_related, and product inside items needs Prefetch with select_related('product') or 'items__product'; mentions measuring query count."
+  - id: hard-debug-swift-retain-cycle
+    prompt: "A UIViewController is never deallocated after dismiss. It stores `self.timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in self.tick() }` and subscribes `viewModel.$items.sink { self.items = $0 }.store(in: &cancellables)`. Explain every cycle and fix."
+    must: ['retain cycle|strong reference', '\[weak self\]', 'invalidate']
+    rubric: "Timer is retained by the run loop and its closure retains self; Combine sink closure retains self via cancellables owned by self; fix with [weak self] and invalidating the timer when leaving."
+  - id: hard-debug-kotlin-coroutine-scope
+    prompt: "An Android app crashes with 'IllegalStateException: Fragment not attached' a few seconds after leaving a screen. The fragment launches `GlobalScope.launch { val data = repo.load(); binding.list.adapter = Adapter(data) }`. Explain and fix."
+    must: ['GlobalScope', 'lifecycleScope|viewLifecycleOwner|viewModelScope', 'cancel']
+    rubric: "GlobalScope outlives the fragment so the callback touches a detached view; use viewLifecycleOwner.lifecycleScope (or viewModelScope + observe), which cancels with the lifecycle; also switch UI work to Main."
+  - id: hard-debug-cache-stampede
+    prompt: "Every hour at :00 our database CPU spikes to 100% for a minute. A popular query is cached in Redis with `SETEX key 3600 value` set when the cache is empty, and all app servers started at the same time. Explain and give two independent mitigations."
+    must: ['stampede|thundering herd|dogpile', 'jitter|random', 'lock|single.flight|early (re)?compute|probabilistic']
+    rubric: "Synchronized expiry causes many concurrent misses recomputing the same value; mitigations: TTL jitter, a recompute lock/single-flight, stale-while-revalidate or probabilistic early refresh."
+  - id: hard-debug-unicode-normalization
+    prompt: "Users report they cannot log in when their username contains 'é' on macOS but can on Windows. Usernames are compared byte for byte after `.lower()`. Explain and fix, including what to store in the database."
+    must: ['normaliz', 'NFC|NFKC', 'casefold|lower']
+    rubric: "Composed vs decomposed é (NFC vs NFD) differ in bytes; normalize (NFC or NFKC) and casefold before storing and comparing; store the normalized form and migrate existing rows."
+  - id: hard-debug-docker-dns
+    prompt: "Our app container cannot reach `db:5432` with 'Name or service not known', yet `docker ps` shows both running. App was started with `docker run --network host app` and db via docker compose. Explain and give the fix."
+    must: ['network', 'compose', 'service name|DNS|bridge']
+    rubric: "Service-name DNS works only inside the compose network; host networking bypasses it; attach the app to the compose network (or add it to compose) and use the service name, or use localhost with published ports."
+  - id: hard-debug-integer-overflow-java
+    prompt: "A Java service computing average order value returns negative numbers for big customers: `int total = 0; for (Order o : orders) total += o.cents; return total / orders.size();`. Explain all problems and fix."
+    must: ['overflow', 'long|BigDecimal|Math\.addExact', 'empty|size\(\) == 0|division by zero|isEmpty']
+    rubric: "int overflow past ~2.1 billion cents; use long or addExact; integer division truncates; handle empty list; consider BigDecimal for exact averages."
+
+  # --- hard: refactor and design with a catch -----------------------------------------
+  - id: hard-refactor-legacy-payment
+    prompt: "Refactor this payment function into testable pieces without changing behaviour, and write characterization tests first: `def pay(order): if order.total > 0: r = requests.post(GATEWAY, json={'amt': order.total}); if r.status_code == 200: db.execute('UPDATE orders SET paid=1 WHERE id=%s' % order.id); send_email(order.user); return True; return False`"
+    max_tokens: 12000
+    must: ['def test_', 'mock|Mock|monkeypatch', 'parameter|%s|\?']
+    rubric: "Characterization tests pin current behaviour before refactoring; gateway, db and email injected; also flags the SQL injection and the paid-but-email-fails ordering issue."
+  - id: hard-design-exactly-once
+    prompt: "We consume payment events from Kafka and call a payment provider. Duplicate charges happen during consumer rebalances. Design an end-to-end fix and explain why 'exactly-once' in Kafka alone does not solve it."
+    must: ['idempoten', 'key', 'rebalanc|commit|offset']
+    rubric: "Kafka EOS covers Kafka-to-Kafka only; side effects need an idempotency key per event sent to the provider plus a dedupe table, and committing offsets after the effect is recorded."
+  - id: hard-design-schema-migration-live
+    prompt: "Rename a heavily used column `users.fullname` to `display_name` in a Postgres-backed service with 20 app instances and no downtime allowed. Give the step-by-step plan including the code changes at each step."
+    must: ['expand|dual.write|backfill', 'contract|drop', 'deploy']
+    rubric: "Expand-contract: add new column, dual write, backfill in batches, switch reads, stop old writes, drop old column; each step deployable and reversible."
+  - id: hard-design-rate-limit-distributed
+    prompt: "Design a distributed rate limiter for 100k requests/second across 50 API nodes with per-customer limits, accurate to within 5%, surviving a Redis node failure. Compare sliding window log, sliding window counter and token bucket for this case."
+    must: ['token bucket', 'sliding window', 'redis', 'lua|atomic']
+    rubric: "Picks an approach with justification (e.g. token bucket or sliding counter with Lua for atomicity), handles Redis failure (fail-open vs fail-closed choice, local fallback), discusses accuracy vs memory."
+  - id: hard-design-multi-tenant-isolation
+    prompt: "A B2B SaaS on Postgres stores all tenants in shared tables with a tenant_id column. A bug leaked one tenant's data to another. Design defences in depth so a single missing WHERE clause can never leak data again."
+    must: ['row level security|RLS', 'tenant_id', 'policy|current_setting|session']
+    rubric: "Postgres RLS policies keyed on a per-session tenant setting, app-level scoping, tests that try cross-tenant reads, and monitoring; mentions connection pooling pitfalls with session variables."
+  - id: hard-design-search-ranking
+    prompt: "Our product search returns relevant items but customers complain the best sellers are buried. Design a ranking that blends text relevance, popularity and recency without letting popular items dominate every query, and how to evaluate it offline and online."
+    must: ['BM25|relevance', 'popular|sales', 'NDCG|A/B|offline|online']
+    rubric: "Blends a text score with dampened popularity (log or capped) and decay; prevents domination via normalization or query-dependent weights; offline NDCG on judged queries plus online A/B with guardrails."
+  - id: hard-design-mobile-sync-conflict
+    prompt: "Two devices edit the same note offline; one edits the title, the other the body. Last-write-wins loses data. Design a sync model that merges non-conflicting edits and surfaces true conflicts to the user."
+    must: ['field.level|per.field|CRDT|three.way', 'conflict', 'version|vector clock|timestamp']
+    rubric: "Per-field merge (three-way with a common base or CRDT) keeps both edits; same-field concurrent edits detected via versions and shown to the user; discusses clock skew."
+  - id: hard-design-llm-router
+    prompt: "Design a router that picks the cheapest LLM likely to answer a coding prompt correctly, among 6 models with different prices and quality. Explain how you measure 'likely correct', how you avoid overfitting to a benchmark, and how you account for cache effects when switching models mid-conversation."
+    must: ['held.out|test set|cross.valid', 'cache', 'calibrat|expected cost|probabilit']
+    rubric: "Uses expected cost (price plus failure cost times failure probability) with calibrated per-task success estimates, held-out evaluation, and keeps a conversation on one model unless the gain exceeds the cache-loss cost."
+
+  # --- diverse: many languages and task types, mostly routine --------------------------
+  # Ids are div-<language>-<task>-... so `bench matrix --only 'div-*'` groups by language.
+  # Sized so small local models can pass some: this is where their routing evidence comes from.
+  - id: div-go-explain-defer
+    prompt: "What does this Go program print and why? func main() { for i := 0; i < 3; i++ { defer fmt.Println(i) } }"
+    must: ['2\D+1\D+0', 'LIFO|last.in|reverse|stack']
+    rubric: "Prints 2, 1, 0: defers run last-in first-out and the argument is evaluated when defer runs."
+  - id: div-go-test-table
+    prompt: "Write a table-driven Go test for func Abs(x int) int covering negative, zero and positive inputs."
+    must: ['func TestAbs\w*\(t \*testing\.T\)', '\[\]struct', 't\.(Errorf|Fatalf)']
+    rubric: "Table of cases (negative, zero, positive) looped with t.Run or a plain loop; failure message shows got and want."
+  - id: div-go-debug-nil-map
+    prompt: "This Go code panics with 'assignment to entry in nil map': var counts map[string]int; counts[\"a\"]++. Fix it and explain."
+    must: ['make\(map\[string\]int\)|map\[string\]int\{\}', 'nil']
+    rubric: "A declared map is nil until made; initialise with make or a literal before writing."
+  - id: div-go-edit-context
+    prompt: "Add a context.Context parameter to this Go function and use it for the request: func fetch(url string) (*http.Response, error) { req, _ := http.NewRequest(\"GET\", url, nil); return http.DefaultClient.Do(req) }"
+    must: ['ctx context\.Context', 'NewRequestWithContext\(ctx']
+    rubric: "ctx is the first parameter, passed to NewRequestWithContext; the NewRequest error is no longer ignored."
+  - id: div-go-refactor-wrap-error
+    prompt: "Refactor so the returned error says which file failed: func load(path string) ([]byte, error) { b, err := os.ReadFile(path); if err != nil { return nil, err }; return b, nil }"
+    must: ['fmt\.Errorf\(.*%w', 'path']
+    rubric: "Wraps with fmt.Errorf and %w including the path, so errors.Is still works."
+  - id: div-rust-explain-move
+    prompt: "Why does this Rust code not compile? let s = String::from(\"hi\"); let t = s; println!(\"{}\", s);"
+    must: ['mov', 'clone|&s|borrow']
+    rubric: "String is not Copy; `let t = s` moves ownership so s is invalid; fix with s.clone() or borrowing."
+  - id: div-rust-edit-result
+    prompt: "Change this Rust function to return a Result instead of panicking: fn parse_port(s: &str) -> u16 { s.parse().unwrap() }"
+    must: ['Result<u16', 'ParseIntError|Box<dyn|String>']
+    must_not: ['fn parse_port[^}]*unwrap\(\)']
+    rubric: "Signature returns Result<u16, ParseIntError> (or a boxed error) and the body returns s.parse() or uses ?."
+  - id: div-rust-test-module
+    prompt: "Write Rust unit tests for fn is_even(n: i32) -> bool in a test module."
+    must: ['#\[cfg\(test\)\]', '#\[test\]', 'assert']
+    rubric: "cfg(test) module with use super::*, tests for even, odd, zero and negative."
+  - id: div-rust-debug-lifetime
+    prompt: "Fix this Rust error 'missing lifetime specifier': fn longest(a: &str, b: &str) -> &str { if a.len() > b.len() { a } else { b } }"
+    must: ["<'a>", "&'a str"]
+    rubric: "Adds one lifetime 'a tying both inputs to the output and explains why the compiler cannot infer it."
+  - id: div-java-explain-equals
+    prompt: "In Java, why does new String(\"a\") == new String(\"a\") return false while .equals returns true?"
+    must: ['reference|identity|same object', 'equals']
+    rubric: "== compares references; equals compares contents; mentions the string pool for literals."
+  - id: div-java-refactor-stream
+    prompt: "Rewrite this Java loop using streams: List<String> out = new ArrayList<>(); for (String s : names) { if (s.startsWith(\"A\")) out.add(s.toUpperCase()); }"
+    must: ['\.stream\(\)', '\.filter\(', '\.map\(', 'collect|toList']
+    rubric: "names.stream().filter(...).map(String::toUpperCase).toList() or collect(Collectors.toList())."
+  - id: div-java-debug-concurrent-mod
+    prompt: "This Java code throws ConcurrentModificationException: for (String s : list) { if (s.isEmpty()) list.remove(s); }. Fix it."
+    must: ['removeIf|Iterator|iterator\(\)']
+    rubric: "Use list.removeIf(String::isEmpty) or an explicit Iterator with it.remove(); explains fail-fast iterators."
+  - id: div-kotlin-edit-data-class
+    prompt: "Convert this Kotlin class to a data class with immutable fields: class User(var name: String, var age: Int)"
+    must: ['data class User', 'val name', 'val age']
+    must_not: ['data class User\(var']
+    rubric: "data class User(val name: String, val age: Int); mentions copy() for changes."
+  - id: div-kotlin-test-junit
+    prompt: "Write a JUnit 5 test in Kotlin for fun fizz(n: Int): String which returns \"Fizz\" for multiples of 3 and the number otherwise."
+    must: ['@Test', 'assertEquals', 'fizz\(']
+    rubric: "At least one multiple-of-3 case and one other case, using kotlin.test or JUnit assertions."
+  - id: div-csharp-explain-wait
+    prompt: "In C#, what is the difference between Task.Wait() and await, and why can .Wait() deadlock in a UI app?"
+    must: ['SynchronizationContext|UI thread|context', 'block']
+    rubric: "Wait blocks the thread; the continuation needs the captured UI context which is blocked, so neither proceeds; await yields instead."
+  - id: div-csharp-test-xunit
+    prompt: "Write xUnit tests for the C# static method int Calculator.Add(int a, int b)."
+    must: ['\[Fact\]|\[Theory\]', 'Assert\.Equal']
+    rubric: "Fact or Theory with InlineData covering positives, negatives and zero."
+  - id: div-ruby-refactor-idiomatic
+    prompt: "Make this Ruby more idiomatic: result = []; items.each do |i| if i > 0 then result << i * 2 end end"
+    must: ['select|filter_map|filter|reject', 'map|filter_map']
+    rubric: "items.select(&:positive?).map { |i| i * 2 } or items.filter_map { |i| i * 2 if i > 0 }."
+  - id: div-php-debug-sql-injection
+    prompt: "Fix the security problem in this PHP: $r = $db->query(\"SELECT * FROM users WHERE id = \" . $_GET['id']);"
+    must: ['prepare', 'execute|bind']
+    rubric: "Names SQL injection and uses a PDO or mysqli prepared statement with a bound parameter."
+  - id: div-bash-chore-rename
+    prompt: "Write a bash command that renames every .jpeg file in the current directory to .jpg."
+    must: ['\.jpg', 'mv|rename']
+    rubric: "Loop over *.jpeg with mv \"$f\" \"${f%.jpeg}.jpg\" (quoted, handles spaces) or an equivalent rename call."
+  - id: div-bash-debug-quoting
+    prompt: "This bash loop breaks on filenames with spaces: for f in $(ls *.txt); do wc -l $f; done. Fix it."
+    must: ['for f in \*\.txt|-print0|while', '"\$f"']
+    rubric: "Glob directly instead of parsing ls and quote \"$f\"; explains word splitting."
+  - id: div-sql-edit-top-n
+    prompt: "Using a window function, write SQL returning each department's top 2 earners from employees(id, name, dept, salary)."
+    must: ['ROW_NUMBER|DENSE_RANK|RANK', 'PARTITION BY\s+dept']
+    rubric: "Ranks within dept ordered by salary desc in a subquery or CTE, filters rank <= 2; notes ties."
+  - id: div-sql-explain-sargable
+    prompt: "Why does this query not use the index on users(created_at)? SELECT * FROM users WHERE DATE(created_at) = '2026-01-01'"
+    must: ['function|sargable|wrap', '>=|BETWEEN|range']
+    rubric: "Wrapping the column in a function prevents index use; rewrite as a half-open range on created_at (or an expression index)."
+  - id: div-ts-edit-generic
+    prompt: "Make this TypeScript function generic so it keeps the element type: function first(arr: any[]): any { return arr[0]; }"
+    must: ['first<T', 'T\[\]|Array<T>', 'T \| undefined|\): T']
+    rubric: "function first<T>(arr: T[]): T | undefined (or readonly T[]); explains the undefined case."
+  - id: div-ts-explain-unknown
+    prompt: "In TypeScript, what is the difference between any and unknown?"
+    must: ['narrow|type guard|typeof|check', 'unknown']
+    rubric: "any disables checking; unknown accepts anything but must be narrowed before use; prefer unknown."
+  - id: div-ts-test-vitest
+    prompt: "Write Vitest tests for function slugify(s: string): string that lowercases and replaces spaces with dashes."
+    must: ["from ['\"]vitest['\"]", 'expect\(', 'toBe']
+    rubric: "describe/it with lowercase, spaces, multiple spaces and empty string cases."
+  - id: div-js-explain-this
+    prompt: "Why is `this` undefined inside my class method when I pass it as a callback: button.addEventListener('click', this.handle)?"
+    must: ['bind|arrow', 'this']
+    rubric: "The method is detached from the instance; fix with this.handle.bind(this) or an arrow-function class field."
+  - id: div-py-edit-dataclass
+    prompt: "Convert this to a Python dataclass: class Point:\n    def __init__(self, x, y):\n        self.x = x\n        self.y = y"
+    must: ['@dataclass', 'from dataclasses import', 'x: (int|float)']
+    rubric: "@dataclass with typed x and y fields; mentions free __repr__ and __eq__."
+  - id: div-py-explain-float
+    prompt: "Why does print(0.1 + 0.2) show 0.30000000000000004 in Python, and how should I compare floats?"
+    must: ['binary|floating', 'isclose|Decimal|tolerance|epsilon']
+    rubric: "0.1 has no exact binary representation; compare with math.isclose or use Decimal for money."
+  - id: div-py-test-parametrize
+    prompt: "Write pytest tests using parametrize for def is_palindrome(s: str) -> bool."
+    must: ['@pytest\.mark\.parametrize', 'def test_', 'is_palindrome']
+    rubric: "Parametrized cases for true and false palindromes, the empty string and a single character."
+  - id: div-py-refactor-pathlib
+    prompt: "Rewrite with pathlib: import os\npath = os.path.join(base, 'data', 'x.csv')\nif os.path.exists(path):\n    with open(path) as f:\n        text = f.read()"
+    must: ['from pathlib import Path|pathlib\.Path', 'read_text|open\(', '\.exists\(\)|is_file\(\)']
+    rubric: "Path(base) / 'data' / 'x.csv', .exists() or .is_file(), and read_text()."
+  - id: div-c-debug-overflow
+    prompt: "What is wrong with this C code? char buf[8]; strcpy(buf, user_input);"
+    must: ['overflow', 'strncpy|snprintf|strlcpy|length|size']
+    rubric: "Buffer overflow if input is 8+ bytes; bound the copy with snprintf or a length check, ensure NUL termination."
+  - id: div-swift-edit-guard
+    prompt: "Rewrite this Swift with guard let: func greet(name: String?) { if name != nil { print(\"Hi \\(name!)\") } }"
+    must: ['guard let', 'else\s*\{[^}]*return']
+    must_not: ['name!']
+    rubric: "guard let name else { return } then prints without force-unwrapping."
+  - id: div-docker-chore-node
+    prompt: "Write a minimal Dockerfile for a Node 22 app started with `npm start`, installing only production dependencies and running as a non-root user."
+    must: ['FROM node:22', 'npm ci|npm install', 'omit=dev|--production|NODE_ENV=production', 'USER ']
+    rubric: "Copies package files first for layer caching, installs prod deps only, switches to a non-root user, CMD npm start."
+  - id: div-terraform-edit-tags
+    prompt: "Add a tags block with Environment = \"prod\" to this Terraform resource: resource \"aws_s3_bucket\" \"logs\" { bucket = \"acme-logs\" }"
+    must: ['tags\s*=\s*\{', 'Environment\s*=\s*"prod"', 'aws_s3_bucket']
+  - id: div-regex-chore-zip
+    prompt: "Write a regex that matches a whole US ZIP code: 5 digits, optionally followed by a dash and 4 digits."
+    must: ['\\d\{5\}|\[0-9\]\{5\}', '\{4\}\)\?']
+    rubric: "^\\d{5}(-\\d{4})?$ with anchors."
+  - id: div-git-explain-rebase
+    prompt: "When should I use git rebase instead of git merge, and when should I not?"
+    must: ['history|linear', 'shared|public|pushed']
+    rubric: "Rebase for a clean linear history on local or private branches; never rebase commits others have pulled."
+  - id: div-k8s-explain-probes
+    prompt: "What is the difference between a liveness probe and a readiness probe in Kubernetes?"
+    must: ['restart', 'traffic|endpoint|service']
+    rubric: "Liveness failure restarts the container; readiness failure removes the pod from service endpoints without restarting."
+  - id: div-html-edit-a11y
+    prompt: "Make this HTML accessible: <div onclick=\"save()\">Save</div><img src=\"logo.png\">"
+    must: ['<button', 'alt=']
+    rubric: "Uses a real <button> (keyboard and role for free) and adds meaningful alt text."
+  - id: div-css-explain-center
+    prompt: "Why doesn't margin: auto center my div vertically in normal block layout, and how do I center it both ways?"
+    must: ['flex|grid', 'align-items|place-items|align-self|place-content']
+    rubric: "Auto vertical margins resolve to 0 in block flow; use flexbox or grid centering."
+  - id: div-gha-chore-pytest
+    prompt: "Write a GitHub Actions workflow that runs pytest on Python 3.12 on every push."
+    must: ['on:\s*\[?\s*push|on:\s*\n\s*push', 'actions/setup-python', '3\.12', 'pytest']
+    rubric: "Valid workflow: checkout, setup-python 3.12, install deps, run pytest."
+  - id: div-design-pagination
+    prompt: "Should my REST API use offset or cursor pagination for an infinite-scroll feed? Short answer with reasons."
+    must: ['cursor', 'offset']
+    rubric: "Recommends cursor: stable under inserts (no duplicates or skips) and no deep-offset scan cost; offset fine for small page-numbered lists."
+  - id: div-design-cache-keys
+    prompt: "I cache user profile JSON in Redis. What key naming and TTL scheme would you use, and how do I invalidate on update?"
+    must: ['user:|profile:', 'TTL|expire', 'invalidat|delete|DEL']
+    rubric: "Namespaced keys like user:{id}:profile with a version if needed, a TTL with jitter, delete or overwrite on write after the DB commit."
+
+  # --- hard: large multi-file builds (added 2026-11-20) ---------------------------------
+  # Cheap models tend to stop after the first files of a big build. These widen the gap
+  # between models so held-out scoring can tell routing apart from "always the cheap one".
+  - id: hard-build-rate-limiter-service
+    prompt: "Build a Python rate-limiting service: limiter/token_bucket.py (atomic Redis Lua script), limiter/sliding_window.py (Redis sorted sets), api/app.py (FastAPI middleware returning 429 with Retry-After), config.py (per-route limits from YAML) and tests/test_limiter.py using fakeredis. Give every file in full."
+    max_tokens: 16000
+    must: ['token_bucket\.py', 'sliding_window\.py', 'app\.py', 'config\.py', 'test_limiter\.py', 'Retry-After', 'ZADD|zadd|ZREMRANGEBYSCORE|zremrangebyscore', 'EVAL|eval|register_script']
+    rubric: "Token bucket refill and take happen atomically in one Lua script; sliding window trims old entries before counting; middleware sets Retry-After on 429; per-route limits load from YAML; tests cover burst, refill and window edges."
+  - id: hard-build-ts-monorepo-sdk
+    prompt: "Create a TypeScript API client SDK in a pnpm monorepo: packages/core/src/http.ts (fetch wrapper with retries and timeout via AbortController), packages/core/src/errors.ts (typed error classes), packages/users/src/index.ts (typed users resource with pagination iterator), packages/core/package.json, packages/users/package.json and pnpm-workspace.yaml. Give every file in full."
+    max_tokens: 16000
+    must: ['http\.ts', 'errors\.ts', 'packages/users/src/index\.ts', 'pnpm-workspace\.yaml', 'AbortController', 'async\s*\*|AsyncIterable|Symbol\.asyncIterator', 'workspace:']
+    rubric: "Retries only idempotent or retryable failures with backoff; timeout aborts the request; errors are typed subclasses; users resource pages with an async iterator; package.json files reference the core package via workspace protocol."
+  - id: hard-build-django-tenant-app
+    prompt: "Build a Django app for multi-tenant projects: models.py (Tenant, Project with tenant FK), middleware.py (resolve tenant from subdomain), managers.py (a manager that always filters by the current tenant), views.py (DRF viewsets), permissions.py and tests.py proving one tenant can never read another's projects. Give every file in full."
+    max_tokens: 16000
+    must: ['models\.py', 'middleware\.py', 'managers\.py', 'views\.py', 'permissions\.py', 'tests\.py', 'ForeignKey', 'subdomain|get_host|HTTP_HOST']
+    rubric: "Tenant is resolved per request and stored safely (contextvar or request attribute, not a module global); the manager filters by tenant by default; viewsets use it; tests create two tenants and prove isolation on list and detail."
+  - id: hard-build-rust-cli-indexer
+    prompt: "Write a Rust CLI that indexes a folder of Markdown files for full-text search: Cargo.toml, src/main.rs (clap subcommands index and search), src/index.rs (inverted index with term frequencies, saved with serde to a file), src/tokenize.rs (lowercase, strip punctuation, stop words) and tests in src/index.rs. Give every file in full."
+    max_tokens: 16000
+    must: ['Cargo\.toml', 'main\.rs', 'index\.rs', 'tokenize\.rs', 'clap', 'serde', '#\[test\]', 'HashMap|BTreeMap']
+    rubric: "Compiles in principle: consistent module names and types; search ranks by term frequency (or TF-IDF) across files; index persists and reloads; tests cover tokenizing and ranking."
+  - id: hard-build-kotlin-android-repo
+    prompt: "Build an Android feature in Kotlin: data/ArticleDao.kt (Room), data/ArticleApi.kt (Retrofit), data/ArticleRepository.kt (offline-first: emit cached Room data as a Flow, refresh from network, save), ui/ArticlesViewModel.kt (StateFlow UI state with loading, error and content), ui/ArticlesScreen.kt (Jetpack Compose list with pull to refresh). Give every file in full."
+    max_tokens: 16000
+    must: ['ArticleDao\.kt', 'ArticleApi\.kt', 'ArticleRepository\.kt', 'ArticlesViewModel\.kt', 'ArticlesScreen\.kt', '@Dao', 'Flow<', 'StateFlow', '@Composable']
+    rubric: "Repository exposes Room data as a Flow and refreshes from network into Room (single source of truth); view model maps to a sealed or data UI state with errors kept; screen collects state with lifecycle awareness and supports refresh."
+  - id: hard-build-node-job-queue
+    prompt: "Build a Node.js + TypeScript background job system with BullMQ: src/queue.ts (queue and typed job payloads), src/worker.ts (concurrency 5, retries with exponential backoff, dead-letter handling after the last attempt), src/scheduler.ts (repeatable cron jobs), src/api.ts (Express endpoint to enqueue and check job status) and test/worker.test.ts. Give every file in full."
+    max_tokens: 16000
+    must: ['queue\.ts', 'worker\.ts', 'scheduler\.ts', 'api\.ts', 'worker\.test\.ts', 'bullmq', 'backoff', 'concurrency', 'repeat|cron']
+    rubric: "Payload types shared between queue and worker; retries use exponential backoff; jobs that exhaust attempts go to a dead-letter queue or are recorded as such; repeatable jobs are deduplicated; status endpoint reads job state."
+  - id: hard-build-terraform-aws-service
+    prompt: "Write Terraform for a containerised web service on AWS: main.tf (VPC with public and private subnets across two AZs), ecs.tf (Fargate service and task definition), alb.tf (load balancer, HTTPS listener, target group health check), iam.tf (least-privilege task role and execution role), variables.tf and outputs.tf. Give every file in full."
+    max_tokens: 16000
+    must: ['main\.tf', 'ecs\.tf', 'alb\.tf', 'iam\.tf', 'variables\.tf', 'outputs\.tf', 'aws_ecs_service', 'aws_lb_target_group', 'FARGATE']
+    rubric: "Tasks run in private subnets behind the ALB; the security group lets only the ALB reach the task port; task role and execution role are separate and scoped; health check path set; outputs expose the ALB DNS name."
+  - id: hard-build-ios-core-data-sync
+    prompt: "Build an iOS SwiftUI to-do feature with Core Data and CloudKit-free sync to a REST API: Persistence/PersistenceController.swift (background context, merge policy), Sync/SyncEngine.swift (push dirty items, pull changes since a server cursor, resolve conflicts by updatedAt), Models/TodoItem+CoreData.swift, Views/TodoListView.swift and Tests/SyncEngineTests.swift. Give every file in full."
+    max_tokens: 16000
+    must: ['PersistenceController\.swift', 'SyncEngine\.swift', 'TodoItem', 'TodoListView\.swift', 'SyncEngineTests\.swift', 'NSManagedObjectContext|newBackgroundContext|performBackgroundTask', 'updatedAt|updated_at', 'XCTest']
+    rubric: "Writes happen on a background context and merge into the view context; sync pushes local dirty rows then pulls with a stored cursor; conflicts resolve by updatedAt consistently; tests cover a conflict both ways."
+  - id: hard-build-go-grpc-service
+    prompt: "Build a Go gRPC inventory service: proto/inventory.proto (Reserve, Release and Get stock RPCs), internal/store/store.go (Postgres with SELECT ... FOR UPDATE to prevent overselling), internal/server/server.go (gRPC handlers with proper status codes), cmd/server/main.go (graceful shutdown) and internal/store/store_test.go. Give every file in full."
+    max_tokens: 16000
+    must: ['inventory\.proto', 'store\.go', 'server\.go', 'main\.go', 'store_test\.go', 'FOR UPDATE', 'codes\.|status\.Error', 'GracefulStop']
+    rubric: "Reservation runs in one transaction with a row lock so concurrent reservations cannot oversell; handlers map not-found and insufficient stock to correct gRPC codes; server stops gracefully; test covers concurrent reservations."
+  - id: hard-build-react-form-wizard
+    prompt: "Build a multi-step signup wizard in React + TypeScript: src/wizard/schema.ts (zod schemas per step), src/wizard/useWizard.ts (step state, back and next, persisted to sessionStorage), src/wizard/steps/AccountStep.tsx, src/wizard/steps/ProfileStep.tsx, src/wizard/steps/ReviewStep.tsx and src/wizard/Wizard.tsx using react-hook-form. Give every file in full."
+    max_tokens: 16000
+    must: ['schema\.ts', 'useWizard\.ts', 'AccountStep\.tsx', 'ProfileStep\.tsx', 'ReviewStep\.tsx', 'Wizard\.tsx', 'zod|z\.object', 'useForm', 'sessionStorage']
+    rubric: "Each step validates with its own zod schema before moving on; state survives a reload via sessionStorage; back keeps entered values; review shows all values and submits once."
+  - id: hard-build-python-etl-pipeline
+    prompt: "Build a Python ETL pipeline: etl/extract.py (paginated HTTP extraction with retries), etl/transform.py (pydantic validation, bad rows to a quarantine file), etl/load.py (idempotent upsert into Postgres with ON CONFLICT), etl/state.py (high-water mark so reruns only fetch new records), etl/run.py (CLI) and tests/test_transform.py. Give every file in full."
+    max_tokens: 16000
+    must: ['extract\.py', 'transform\.py', 'load\.py', 'state\.py', 'run\.py', 'test_transform\.py', 'ON CONFLICT', 'pydantic|BaseModel', 'high.water|watermark|cursor|since']
+    rubric: "Reruns are idempotent (upsert) and incremental (high-water mark saved only after a successful load); invalid rows are quarantined, not dropped silently; extraction follows pagination with retries."
+  - id: hard-build-vue-dashboard
+    prompt: "Build a Vue 3 + TypeScript analytics dashboard: src/stores/metrics.ts (Pinia store with loading and error state), src/api/metrics.ts (typed fetch), src/components/KpiCard.vue, src/components/TimeSeriesChart.vue (Chart.js), src/views/DashboardView.vue (date range filter that refetches) and src/router/index.ts. Give every file in full."
+    max_tokens: 16000
+    must: ['stores/metrics\.ts', 'api/metrics\.ts', 'KpiCard\.vue', 'TimeSeriesChart\.vue', 'DashboardView\.vue', 'router/index\.ts', 'defineStore', 'chart\.js|Chart\.js|vue-chartjs', '<script setup']
+    rubric: "Store owns fetching with loading and error state; changing the date range refetches without duplicate requests; chart updates on new data and is destroyed on unmount; types flow from the API module."
+  - id: hard-build-java-spring-orders
+    prompt: "Build a Spring Boot orders service in Java: Order.java (JPA entity with optimistic locking), OrderRepository.java, OrderService.java (create, pay and cancel with state machine rules), OrderController.java (REST with validation and error mapping), OutboxEvent.java plus OutboxPublisher.java (transactional outbox) and OrderServiceTest.java. Give every file in full."
+    max_tokens: 16000
+    must: ['Order\.java', 'OrderRepository\.java', 'OrderService\.java', 'OrderController\.java', 'OutboxPublisher\.java', 'OrderServiceTest\.java', '@Version', '@Transactional', '@Valid']
+    rubric: "State transitions are enforced (no paying a cancelled order); outbox row written in the same transaction as the order change and published later; optimistic locking via @Version; controller maps domain errors to 4xx."
+  - id: hard-build-flutter-riverpod-chat
+    prompt: "Build a Flutter chat screen with Riverpod: lib/models/message.dart, lib/data/chat_repository.dart (WebSocket stream with reconnect and backoff), lib/state/chat_controller.dart (AsyncNotifier with optimistic send and failed-message retry), lib/ui/chat_page.dart and test/chat_controller_test.dart. Give every file in full."
+    max_tokens: 16000
+    must: ['message\.dart', 'chat_repository\.dart', 'chat_controller\.dart', 'chat_page\.dart', 'chat_controller_test\.dart', 'riverpod|Riverpod', 'WebSocket|web_socket_channel', 'reconnect|backoff']
+    rubric: "Messages appear immediately as pending and become sent or failed; failed messages can be retried; the socket reconnects with backoff; test overrides the repository provider."
+  - id: hard-build-csharp-minimal-api
+    prompt: "Build an ASP.NET Core minimal API in C#: Program.cs (endpoints, JWT auth, rate limiting), Data/AppDbContext.cs (EF Core), Models/Booking.cs, Services/BookingService.cs (no double booking of a room for overlapping times, enforced in a transaction), Validation/BookingValidator.cs (FluentValidation) and Tests/BookingServiceTests.cs (xUnit). Give every file in full."
+    max_tokens: 16000
+    must: ['Program\.cs', 'AppDbContext\.cs', 'Booking\.cs', 'BookingService\.cs', 'BookingValidator\.cs', 'BookingServiceTests\.cs', 'AddRateLimiter|RateLimiter', 'BeginTransaction|IsolationLevel|Serializable', '\[Fact\]']
+    rubric: "Overlap check and insert run atomically (serializable transaction or a constraint) so concurrent bookings cannot overlap; endpoints require auth; validator rejects end before start; tests cover overlap and edge-touching intervals."
+  - id: hard-build-elixir-presence
+    prompt: "Build an Elixir Phoenix feature: lib/app_web/channels/room_channel.ex (join with auth, broadcast), lib/app_web/presence.ex (Phoenix.Presence tracking), lib/app/rooms.ex (context with Ecto queries), lib/app/rooms/message.ex (schema and changeset) and test/app_web/channels/room_channel_test.exs. Give every file in full."
+    max_tokens: 16000
+    must: ['room_channel\.ex', 'presence\.ex', 'rooms\.ex', 'message\.ex', 'room_channel_test\.exs', 'Phoenix\.Presence', 'changeset', 'broadcast']
+    rubric: "Join authorises the user for the room; presence tracked after join and diff pushed; messages validated by changeset and persisted before broadcast; channel test covers join, message and unauthorised join."
